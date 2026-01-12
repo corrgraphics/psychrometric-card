@@ -5,7 +5,7 @@
 
 A native, lightweight Lovelace card that renders a live **Psychrometric Chart** using real-time entity data.
 
-This card visualizes the state of air in your home against the **ASHRAE 55 Comfort Zone**. It features unlimited custom state points, wet-bulb lines, and an innovative **Annual Weather Heatmap** layer driven by EPW climate files.
+This card visualizes the state of air in your home against the **ASHRAE 55 Comfort Zone**. It features unlimited custom state points, color customization, and an innovative **Annual Weather Heatmap** layer driven by EPW climate files.
 
 <img width="892" height="625" alt="image" src="https://github.com/user-attachments/assets/4ab6ca15-c177-4db4-9f4b-ad7928a7162f" />
 
