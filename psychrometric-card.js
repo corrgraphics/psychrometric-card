@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.7 - Historical Ghost Trails
+ * Version 7.0 - Enthalpy Trend Graph
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.7.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v7.0.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -194,6 +194,7 @@ class PsychrometricCard extends HTMLElement {
         this.points = [];
         this.weatherPoints = [];
         this.trailPoints = [];
+        this.enthalpyHistory = [];
         this.weatherLoaded = false;
         this.historyLoading = false;
         this.lastHistoryFetch = 0;
@@ -229,9 +230,10 @@ class PsychrometricCard extends HTMLElement {
             weather_file: config.weather_file || null,
             weather_window_days: config.weather_window_days !== undefined ? parseInt(config.weather_window_days) : 15,
             heatmap_colors: rawHeatmapColors,
-            // Trails Config
+            // Trails & Trends Config
             enable_trails: config.enable_trails !== undefined ? config.enable_trails : false,
             trail_hours: config.trail_hours !== undefined ? parseInt(config.trail_hours) : 24,
+            enthalpy_trend_hours: config.enthalpy_trend_hours !== undefined ? parseInt(config.enthalpy_trend_hours) : 24,
             // Styling Config
             style: {
                 saturation: styles.saturation_line || "var(--info-color, #3b82f6)",
@@ -279,15 +281,17 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Trigger history fetch if trails enabled and not fetched recently (5 mins)
-        if (this._config.enable_trails && !this.historyLoading && (!this.lastHistoryFetch || (Date.now() - this.lastHistoryFetch > 300000))) {
+        // Trigger history fetch if trails or trends enabled and not fetched recently (5 mins)
+        const fetchNeeded = this._config.enable_trails || this._config.enthalpy_trend_hours > 0;
+        if (fetchNeeded && !this.historyLoading && (!this.lastHistoryFetch || (Date.now() - this.lastHistoryFetch > 300000))) {
             this.fetchHistory();
         }
 
-        // Trigger redraw on data or daily change
+        // Trigger redraw
         const todayDOY = this.getDayOfYear(new Date());
         const trailSig = this.trailPoints ? this.trailPoints.length : 0;
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig;
+        const trendSig = this.enthalpyHistory ? this.enthalpyHistory.length : 0;
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -327,7 +331,17 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
-        const hours = this._config.trail_hours;
+        // Fetch max needed history for trails or enthalpy trend
+        const hours = Math.max(
+            this._config.enable_trails ? this._config.trail_hours : 0, 
+            this._config.enthalpy_trend_hours || 0
+        );
+        
+        if (hours <= 0) {
+            this.historyLoading = false;
+            return;
+        }
+
         const startTime = new Date();
         startTime.setHours(startTime.getHours() - hours);
         const isoStart = startTime.toISOString();
@@ -353,7 +367,6 @@ class PsychrometricCard extends HTMLElement {
     }
 
     processHistory(historyData) {
-        // historyData is an array of arrays. Each inner array contains state objects for one entity.
         const historyMap = {}; 
         historyData.forEach(arr => {
             if(arr.length > 0) {
@@ -363,49 +376,77 @@ class PsychrometricCard extends HTMLElement {
         });
 
         this.trailPoints = []; 
+        this.enthalpyHistory = [];
+
         const now = new Date();
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude);
-        const duration = this._config.trail_hours * 60 * 60 * 1000;
-        const step = 1000 * 60 * 30; // 30 minutes sample step
+        
+        // 1. Process Trails (if enabled)
+        if (this._config.enable_trails) {
+            const duration = this._config.trail_hours * 60 * 60 * 1000;
+            const step = 1000 * 60 * 30; // 30 minutes sample step
 
-        this._config.points.forEach(ptConfig => {
-            const tHist = historyMap[ptConfig.temperature_entity];
-            const hHist = historyMap[ptConfig.humidity_entity];
-            
-            if (!tHist || !hHist) return;
+            this._config.points.forEach(ptConfig => {
+                const tHist = historyMap[ptConfig.temperature_entity];
+                const hHist = historyMap[ptConfig.humidity_entity];
+                if (!tHist || !hHist) return;
 
-            const samples = [];
-            
-            // Iterate backwards from now
-            for (let time = now.getTime() - duration; time < now.getTime(); time += step) {
-                const tState = this.findStateAtTime(tHist, time);
-                const hState = this.findStateAtTime(hHist, time);
-                
-                if (tState && hState && !isNaN(parseFloat(tState.state)) && !isNaN(parseFloat(hState.state))) {
-                    const db = parseFloat(tState.state);
-                    const rh = parseFloat(hState.state);
-                    const w = PsychroMath.getWFromRelHum(db, rh, pressure);
-                    
-                    // Age 0 to 1 (1 = oldest, 0 = newest)
-                    const age = (now.getTime() - time) / duration;
-                    
-                    if (!isNaN(w) && w >= 0) {
-                        samples.push({ db, w, age });
+                const samples = [];
+                for (let time = now.getTime() - duration; time < now.getTime(); time += step) {
+                    const tState = this.findStateAtTime(tHist, time);
+                    const hState = this.findStateAtTime(hHist, time);
+                    if (tState && hState) {
+                        const db = parseFloat(tState.state);
+                        const rh = parseFloat(hState.state);
+                        if(!isNaN(db) && !isNaN(rh)) {
+                            const w = PsychroMath.getWFromRelHum(db, rh, pressure);
+                            const age = (now.getTime() - time) / duration;
+                            if (!isNaN(w) && w >= 0) samples.push({ db, w, age });
+                        }
                     }
                 }
-            }
-            
-            if (samples.length > 0) {
-                this.trailPoints.push({
-                    color: ptConfig.color || "var(--primary-text-color)",
-                    points: samples
-                });
-            }
-        });
+                if (samples.length > 0) {
+                    this.trailPoints.push({ color: ptConfig.color || "var(--primary-text-color)", points: samples });
+                }
+            });
+        }
+
+        // 2. Process Enthalpy Trend (if enabled)
+        if (this._config.enthalpy_trend_hours > 0) {
+            const duration = this._config.enthalpy_trend_hours * 60 * 60 * 1000;
+            const step = 1000 * 60 * 15; // 15 minutes sample step for smoother graph
+
+            this._config.points.forEach(ptConfig => {
+                const tHist = historyMap[ptConfig.temperature_entity];
+                const hHist = historyMap[ptConfig.humidity_entity];
+                if (!tHist || !hHist) return;
+
+                const data = [];
+                for (let time = now.getTime() - duration; time < now.getTime(); time += step) {
+                    const tState = this.findStateAtTime(tHist, time);
+                    const hState = this.findStateAtTime(hHist, time);
+                    if (tState && hState) {
+                        const db = parseFloat(tState.state);
+                        const rh = parseFloat(hState.state);
+                        if(!isNaN(db) && !isNaN(rh)) {
+                            const w = PsychroMath.getWFromRelHum(db, rh, pressure);
+                            const h = PsychroMath.getEnthalpy(db, w);
+                            if (!isNaN(h)) data.push({ time: new Date(time), value: h });
+                        }
+                    }
+                }
+                if (data.length > 0) {
+                    this.enthalpyHistory.push({ 
+                        name: ptConfig.name, 
+                        color: ptConfig.color || "var(--primary-text-color)", 
+                        data: data 
+                    });
+                }
+            });
+        }
     }
 
     findStateAtTime(historyArr, timestamp) {
-        // Simple search: Find last state where last_changed <= timestamp
         for (let i = historyArr.length - 1; i >= 0; i--) {
             if (new Date(historyArr[i].last_changed).getTime() <= timestamp) {
                 return historyArr[i];
@@ -419,7 +460,6 @@ class PsychrometricCard extends HTMLElement {
         const parsedPoints = [];
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude);
         
-        // Days per month map for non-leap year (EPW standard usually)
         const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
         const monthOffsets = [0];
         for(let i=1; i<=12; i++) monthOffsets[i] = monthOffsets[i-1] + daysInMonth[i];
@@ -428,21 +468,16 @@ class PsychrometricCard extends HTMLElement {
             const line = lines[i].trim();
             if (!line) continue;
             const cols = line.split(',');
-            // EPW: Year(0), Month(1), Day(2)
             if (cols.length > 10 && !isNaN(parseInt(cols[0]))) {
                 const month = parseInt(cols[1]);
                 const day = parseInt(cols[2]);
-                
                 const db_c = parseFloat(cols[6]);
                 const rh_percent = parseFloat(cols[8]);
                 
                 if (!isNaN(db_c) && !isNaN(rh_percent) && !isNaN(month) && !isNaN(day)) {
                     const db_f = db_c * 1.8 + 32;
                     const w = PsychroMath.getWFromRelHum(db_f, rh_percent, pressure);
-                    
-                    // Approximate Day of Year for EPW
                     const doy = monthOffsets[month-1] + day;
-
                     if (!isNaN(w) && w >= 0) {
                         parsedPoints.push({ db: db_f, w: w, doy: doy });
                     }
@@ -470,14 +505,12 @@ class PsychrometricCard extends HTMLElement {
             .legend-item { display: flex; items-center; gap: 4px; }
             .dot { width: 10px; height: 10px; border-radius: 50%; }
 
-            /* New HTML Label Styles for ForeignObject */
             .label-box {
                 width: 100%; 
                 height: 100%;
                 box-sizing: border-box;
-                border: 1px solid; /* Color set inline */
+                border: 1px solid; 
                 border-radius: 4px;
-                /* Frosted Glass Effect Base properties */
                 backdrop-filter: blur(4px);
                 -webkit-backdrop-filter: blur(4px);
                 color: var(--primary-text-color);
@@ -607,7 +640,6 @@ class PsychrometricCard extends HTMLElement {
             const binHeightW = 0.0005;
             const bins = {};
 
-            // Seasonal Filtering
             const today = new Date();
             const currentDOY = this.getDayOfYear(today);
             const windowDays = this._config.weather_window_days;
@@ -631,10 +663,8 @@ class PsychrometricCard extends HTMLElement {
             Object.keys(bins).forEach(key => {
                 const [xIndex, yIndex] = key.split(',').map(Number);
                 const count = bins[key];
-                
                 const db0 = tempRange[0] + xIndex * binWidthDB;
                 const w1 = yIndex * binHeightW; 
-                
                 const x = xScale(db0);
                 const w = xScale(db0 + binWidthDB) - x;
                 const yBottom = yScale(w1);
@@ -645,7 +675,6 @@ class PsychrometricCard extends HTMLElement {
                 ctx.fillStyle = ColorUtils.getGradientColor(Math.pow(intensity, 0.5), pColors);
                 ctx.fillRect(x, yTop, w, h);
             });
-            
             ctx.restore();
         }
 
@@ -654,24 +683,22 @@ class PsychrometricCard extends HTMLElement {
         let pointsSvg = '';
         let labelsSvg = '';
         let trailsSvg = '';
+        let trendSvg = '';
         
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
+        const axisColor = cStyle.axis;
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
 
+        // ... [Comfort Zone, Wet Bulb, Grid, Axes - Same as before] ...
         // Comfort Zone
         const met = this._config.metabolic_rate;
         const clo = this._config.clothing_level;
         const vel = this._config.air_velocity;
         const mrtOffset = this._config.mean_radiant_temp_offset;
-
-        const upperLine = [];
-        const lowerLine = [];
-        const maxW = 0.015;
-        const wStep = 0.001;
-
+        const upperLine = []; const lowerLine = []; const maxW = 0.015; const wStep = 0.001;
         for (let w = 0; w <= maxW; w += wStep) {
             const findT = (targetPMV) => {
                 let low = 40, high = 100;
@@ -687,15 +714,13 @@ class PsychrometricCard extends HTMLElement {
                 }
                 return low;
             };
-            const t_cold = findT(-0.5);
-            const t_hot = findT(0.5);
-            lowerLine.push({ x: xScale(t_cold), y: yScale(w) });
-            upperLine.unshift({ x: xScale(t_hot), y: yScale(w) });
+            const t_cold = findT(-0.5); const t_hot = findT(0.5);
+            lowerLine.push({ x: xScale(t_cold), y: yScale(w) }); upperLine.unshift({ x: xScale(t_hot), y: yScale(w) });
         }
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
         svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${satClipPathId})" />`;
 
-        // Wet Bulb Lines
+        // Wet Bulb
         const wbColor = cStyle.wet_bulb;
         for (let wb = -10; wb <= 110; wb += 5) {
             const pts = [];
@@ -736,7 +761,6 @@ class PsychrometricCard extends HTMLElement {
             svgContent += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
         });
-
         const yTicks = [];
         for (let w = 0; w <= humRange[1]; w += 0.005) yTicks.push(w);
         svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
@@ -746,15 +770,11 @@ class PsychrometricCard extends HTMLElement {
             svgContent += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
-
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
         svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+40}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
-            const legendW = 100;
-            const legendH = 10;
-            const legendX = innerWidth - legendW - 10;
-            const legendY = innerHeight - 40;
+            const legendW = 100; const legendH = 10; const legendX = innerWidth - legendW - 10; const legendY = innerHeight - 40;
             const gradientId = `weather-grad-${Math.random().toString(36).substr(2, 9)}`;
             const colors = this._config.heatmap_colors;
             svgContent += `
@@ -774,13 +794,75 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
+        // --- NEW: ENTHALPY TREND GRAPH (Top Left) ---
+        if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
+            const tW = 300; // Trend Width
+            const tH = 120; // Trend Height
+            const tX = 0;   // Top Left X
+            const tY = 0;   // Top Left Y
+            
+            // 1. Calculate Scales for Trend
+            let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
+            this.enthalpyHistory.forEach(series => {
+                series.data.forEach(d => {
+                    if (d.value < minH) minH = d.value;
+                    if (d.value > maxH) maxH = d.value;
+                    const t = d.time.getTime();
+                    if (t < minTime) minTime = t;
+                    if (t > maxTime) maxTime = t;
+                });
+            });
+            // Buffer
+            minH -= 1; maxH += 1;
+            
+            const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
+            const scaleTY = (h) => tH - ((h - minH) / (maxH - minH)) * tH; // Inverted Y for SVG
+            
+            const trendGen = (data) => {
+                if (data.length === 0) return '';
+                const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
+                return d;
+            };
+
+            // 2. Define Gradient Mask for Fade Out
+            const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
+            svgContent += `
+                <defs>
+                    <linearGradient id="trend-fade-grad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="white" stop-opacity="1"/>
+                        <stop offset="60%" stop-color="white" stop-opacity="1"/>
+                        <stop offset="100%" stop-color="white" stop-opacity="0"/>
+                    </linearGradient>
+                    <mask id="${maskId}">
+                        <rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#trend-fade-grad)" />
+                    </mask>
+                </defs>
+            `;
+
+            // 3. Draw Trend Graph Group
+            let trendLines = '';
+            // Axes
+            trendLines += `<line x1="0" y1="${tH}" x2="${tW}" y2="${tH}" stroke="${axisColor}" stroke-width="1" />`; // X
+            trendLines += `<line x1="0" y1="0" x2="0" y2="${tH}" stroke="${axisColor}" stroke-width="1" />`; // Y
+            // Title
+            trendLines += `<text x="5" y="15" font-size="10" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h)</text>`;
+            // Max/Min Y Labels
+            trendLines += `<text x="-5" y="10" font-size="9" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
+            trendLines += `<text x="-5" y="${tH}" font-size="9" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
+
+            this.enthalpyHistory.forEach(series => {
+                trendLines += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="1.5" />`;
+            });
+
+            trendSvg += `<g transform="translate(${tX}, ${tY})" mask="url(#${maskId})">${trendLines}</g>`;
+        }
+
         // --- LAYER 3: TRAILS ---
         this.trailPoints.forEach(trail => {
             trail.points.forEach(pt => {
                 if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return;
                 const cx = xScale(pt.db);
                 const cy = yScale(pt.w);
-                // Older = transparent
                 const opacity = (1 - pt.age) * 0.5;
                 if (opacity > 0.05) {
                     trailsSvg += `<circle cx="${cx}" cy="${cy}" r="2" fill="${trail.color}" stroke="none" opacity="${opacity}" />`;
@@ -789,29 +871,17 @@ class PsychrometricCard extends HTMLElement {
         });
         
         svgContent += `<g class="trails">${trailsSvg}</g>`;
+        svgContent += `<g class="trend">${trendSvg}</g>`; // Add Trend Graph
 
-        // --- LAYER 4: POINTS & LABELS WITH COLLISION ---
-        
+        // --- LAYER 4: POINTS & LABELS ---
+        // ... [Advanced Collision Logic from V6.5 - Same as before] ...
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
-            return {
-                ...pt,
-                cx: xScale(pt.db),
-                cy: yScale(pt.w)
-            };
+            return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
-
         chartPoints.sort((a, b) => a.cy - b.cy);
-
-        const occupied = [];
-        const boxW = 135;
-        const boxH = 65;
-        const padding = 5; 
-
-        chartPoints.forEach(p => {
-            occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 });
-        });
-
+        const occupied = []; const boxW = 135; const boxH = 65; const padding = 5; 
+        chartPoints.forEach(p => { occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 }); });
         const isOverlapping = (rect) => {
             if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
             for (let other of occupied) {
@@ -819,92 +889,32 @@ class PsychrometricCard extends HTMLElement {
             }
             return false;
         };
-
         chartPoints.forEach(pt => {
             const strategies = [
-                { dist: 40, angle: -45 },  
-                { dist: 40, angle: 45 },   
-                { dist: 40, angle: -135 }, 
-                { dist: 40, angle: 135 },  
-                { dist: 80, angle: -45 }, 
-                { dist: 80, angle: 45 },
-                { dist: 80, angle: -135 },
-                { dist: 80, angle: 135 },
-                { dist: 60, angle: -80 }, 
-                { dist: 60, angle: 80 },  
-                { dist: 100, angle: -80 },
-                { dist: 100, angle: 80 }
+                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
+                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
+                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 }
             ];
-
             let bestCandidate = null;
-
             for (let strat of strategies) {
                 const rad = strat.angle * (Math.PI / 180);
                 const dx = Math.cos(rad) * strat.dist;
                 const dy = Math.sin(rad) * strat.dist;
-                
                 const boxX = (dx > 0) ? dx : (dx - boxW);
                 const boxY = (dy > 0) ? dy : (dy - boxH);
-                
                 const absBoxX = pt.cx + boxX;
                 const absBoxY = pt.cy + boxY;
-                
-                const rect = {
-                    left: absBoxX - padding,
-                    top: absBoxY - padding,
-                    right: absBoxX + boxW + padding,
-                    bottom: absBoxY + boxH + padding
-                };
-                
-                if (!isOverlapping(rect)) {
-                    bestCandidate = { dx, dy, boxX, boxY };
-                    break;
-                }
+                const rect = { left: absBoxX - padding, top: absBoxY - padding, right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding };
+                if (!isOverlapping(rect)) { bestCandidate = { dx, dy, boxX, boxY }; break; }
             }
-            
-            if (!bestCandidate) {
-                 const dx = 40; const dy = -40;
-                 bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH };
-            }
-
-            occupied.push({
-                left: pt.cx + bestCandidate.boxX,
-                top: pt.cy + bestCandidate.boxY,
-                right: pt.cx + bestCandidate.boxX + boxW,
-                bottom: pt.cy + bestCandidate.boxY + boxH
-            });
-            
-            const lineX2 = pt.cx + bestCandidate.dx;
-            const lineY2 = pt.cy + bestCandidate.dy;
-            const boxAbsX = pt.cx + bestCandidate.boxX;
-            const boxAbsY = pt.cy + bestCandidate.boxY;
-            
+            if (!bestCandidate) { const dx = 40; const dy = -40; bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; }
+            occupied.push({ left: pt.cx + bestCandidate.boxX, top: pt.cy + bestCandidate.boxY, right: pt.cx + bestCandidate.boxX + boxW, bottom: pt.cy + bestCandidate.boxY + boxH });
+            const lineX2 = pt.cx + bestCandidate.dx; const lineY2 = pt.cy + bestCandidate.dy; const boxAbsX = pt.cx + bestCandidate.boxX; const boxAbsY = pt.cy + bestCandidate.boxY;
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
-            
-            const p_w = PsychroMath.getPwFromW(pt.w, pressure);
-            const wb = PsychroMath.getWetBulb(pt.db, pt.w, pressure);
-            const dp = PsychroMath.getDewPoint(p_w);
-            const h = PsychroMath.getEnthalpy(pt.db, pt.w);
-            const w_grains = pt.w * 7000;
-
-            const lines = [
-                pt.name,
-                `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`,
-                `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`,
-                `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
-            ];
-
-            labelsSvg += `
-                <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
-                    <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};">
-                        <div class="label-title">${lines[0]}</div>
-                        <div class="label-row">${lines[1]}</div>
-                        <div class="label-row">${lines[2]}</div>
-                        <div class="label-row">${lines[3]}</div>
-                    </div>
-                </foreignObject>
-            `;
+            const p_w = PsychroMath.getPwFromW(pt.w, pressure); const wb = PsychroMath.getWetBulb(pt.db, pt.w, pressure); const dp = PsychroMath.getDewPoint(p_w); const h = PsychroMath.getEnthalpy(pt.db, pt.w); const w_grains = pt.w * 7000;
+            const lines = [ pt.name, `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}` ];
+            labelsSvg += `<foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}"><div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};"><div class="label-title">${lines[0]}</div><div class="label-row">${lines[1]}</div><div class="label-row">${lines[2]}</div><div class="label-row">${lines[3]}</div></div></foreignObject>`;
         });
 
         svgContent += `<g class="labels">${labelsSvg}</g>`;
