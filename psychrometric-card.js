@@ -795,8 +795,8 @@ class PsychrometricCard extends HTMLElement {
 
         // --- NEW: ENTHALPY TREND GRAPH (Top Left) ---
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
-            const tW = 600; 
-            const tH = 360; 
+            const tW = 500; 
+            const tH = 300; 
             const tX = 10;   
             const tY = 10;   
             
@@ -934,3 +934,4 @@ class PsychrometricCard extends HTMLElement {
 }
 
 customElements.define('psychrometric-card', PsychrometricCard);
+
