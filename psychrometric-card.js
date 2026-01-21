@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.2 - Visual Refinements (Hollow Points & Translucent Labels)
+ * Version 6.3 - Frosted Glass Labels & Custom Colors
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.3.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -212,6 +212,9 @@ class PsychrometricCard extends HTMLElement {
         const rawHeatmapColors = config.heatmap_colors || ["rgba(96, 165, 250, 0)", "#60a5fa", "#0f766e"];
         this.parsedHeatmapColors = rawHeatmapColors.map(c => ColorUtils.parseColor(c));
 
+        // Chart Style Defaults
+        const styles = config.chart_style || {};
+
         this._config = {
             ...config,
             clothing_level: config.clothing_level !== undefined ? parseFloat(config.clothing_level) : 0.5,
@@ -221,7 +224,16 @@ class PsychrometricCard extends HTMLElement {
             altitude: config.altitude !== undefined ? parseFloat(config.altitude) : 0,
             show_title: config.show_title !== undefined ? config.show_title : true,
             weather_file: config.weather_file || null,
-            heatmap_colors: rawHeatmapColors
+            heatmap_colors: rawHeatmapColors,
+            // Styling Config
+            style: {
+                saturation: styles.saturation_line || "var(--info-color, #3b82f6)",
+                wet_bulb: styles.wet_bulb_lines || "var(--success-color, #10b981)",
+                grid: styles.grid_lines || "var(--divider-color, rgba(100, 100, 100, 0.1))",
+                axis: styles.axis_lines || "var(--secondary-text-color)",
+                comfort_stroke: styles.comfort_zone_stroke || "var(--success-color, #15803d)",
+                comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)"
+            }
         };
         this.renderContainer();
         
@@ -330,6 +342,29 @@ class PsychrometricCard extends HTMLElement {
             .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 0.9em; justify-content: center; color: var(--primary-text-color); }
             .legend-item { display: flex; items-center; gap: 4px; }
             .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+            /* New HTML Label Styles for ForeignObject */
+            .label-box {
+                width: 100%; 
+                height: 100%;
+                box-sizing: border-box;
+                border: 1px solid; /* Color set inline */
+                border-radius: 4px;
+                /* Frosted Glass Effect */
+                background: rgba(var(--rgb-card-background-color, 30, 30, 30), 0.6); 
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+                color: var(--primary-text-color);
+                font-size: 10px;
+                line-height: 1.3;
+                padding: 4px 6px;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            }
+            .label-row { white-space: nowrap; }
+            .label-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
         `;
 
         this.shadowRoot.appendChild(style);
@@ -375,7 +410,7 @@ class PsychrometricCard extends HTMLElement {
              html += `<div class="legend-item"><div class="dot" style="background: ${color}"></div> ${name}</div>`;
         });
         
-        html += `<div class="legend-item"><div class="dot" style="background: rgba(34, 197, 94, 0.2); border: 1px solid var(--success-color, #15803d)"></div> Comfort</div>`;
+        html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> Comfort</div>`;
         
         if (this._config.weather_file) {
              html += `<div class="legend-item"><div class="dot" style="background: linear-gradient(to right, ${this._config.heatmap_colors[1]}, ${this._config.heatmap_colors[2]})"></div> Annual Weather</div>`;
@@ -479,9 +514,10 @@ class PsychrometricCard extends HTMLElement {
         let svgContent = '';
         let pointsSvg = '';
         let labelsSvg = '';
+        
+        // Colors from Config
+        const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
-        const gridColor = "var(--divider-color, rgba(100, 100, 100, 0.1))";
-        const axisColor = "var(--secondary-text-color)";
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
@@ -518,10 +554,10 @@ class PsychrometricCard extends HTMLElement {
             upperLine.unshift({ x: xScale(t_hot), y: yScale(w) });
         }
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
-        svgContent += `<path d="${polyD}" fill="rgba(34, 197, 94, 0.2)" stroke="var(--success-color, #15803d)" stroke-width="1" clip-path="url(#${satClipPathId})" />`;
+        svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${satClipPathId})" />`;
 
         // Wet Bulb Lines
-        const wbColor = "var(--success-color, #10b981)";
+        const wbColor = cStyle.wet_bulb;
         for (let wb = -10; wb <= 110; wb += 5) {
             const pts = [];
             for (let t = wb; t <= tempRange[1]; t += 1) {
@@ -543,32 +579,32 @@ class PsychrometricCard extends HTMLElement {
                 if (w <= humRange[1]) pts.push({ x: xScale(t), y: yScale(w) });
             }
             const isSat = rh === 100;
-            const strokeColor = isSat ? "var(--info-color, #3b82f6)" : axisColor;
+            const strokeColor = isSat ? cStyle.saturation : cStyle.grid;
             svgContent += `<path d="${lineGen(pts)}" fill="none" stroke="${strokeColor}" stroke-width="${isSat ? 2 : 1}" stroke-dasharray="${isSat ? '0' : '4,4'}" opacity="${isSat ? 1 : 0.5}" />`;
             if (pts.length > 5 && !isSat) {
                 const pt = pts[Math.floor(pts.length * 0.7)];
-                svgContent += `<text x="${pt.x}" y="${pt.y - 2}" font-size="10" fill="${axisColor}">${rh}%</text>`;
+                svgContent += `<text x="${pt.x}" y="${pt.y - 2}" font-size="10" fill="${cStyle.axis}">${rh}%</text>`;
             }
         });
 
         // Axes
         const xTicks = [];
         for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
-        svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${axisColor}" />`;
+        svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         xTicks.forEach(t => {
             const x = xScale(t);
-            svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${axisColor}" />`;
-            svgContent += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${gridColor}" />`;
+            svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${cStyle.axis}" />`;
+            svgContent += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
         });
 
         const yTicks = [];
         for (let w = 0; w <= humRange[1]; w += 0.005) yTicks.push(w);
-        svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${axisColor}" />`;
+        svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         yTicks.forEach(w => {
             const y = yScale(w);
-            svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${axisColor}" />`;
-            svgContent += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${gridColor}" />`;
+            svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${cStyle.axis}" />`;
+            svgContent += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
 
@@ -591,10 +627,10 @@ class PsychrometricCard extends HTMLElement {
                    </linearGradient>
                </defs>
                <g transform="translate(${legendX}, ${legendY})">
-                   <rect width="${legendW}" height="${legendH}" fill="url(#${gradientId})" stroke="${axisColor}" stroke-width="0.5" />
-                   <text x="0" y="-4" font-size="9" fill="${axisColor}">0</text>
-                   <text x="${legendW}" y="-4" font-size="9" fill="${axisColor}" text-anchor="end">${maxBinCount} hrs</text>
-                   <text x="${legendW/2}" y="${legendH + 10}" font-size="9" fill="${axisColor}" text-anchor="middle" font-weight="bold">Frequency</text>
+                   <rect width="${legendW}" height="${legendH}" fill="url(#${gradientId})" stroke="${cStyle.axis}" stroke-width="0.5" />
+                   <text x="0" y="-4" font-size="9" fill="${cStyle.axis}">0</text>
+                   <text x="${legendW}" y="-4" font-size="9" fill="${cStyle.axis}" text-anchor="end">${maxBinCount} hrs</text>
+                   <text x="${legendW/2}" y="${legendH + 10}" font-size="9" fill="${cStyle.axis}" text-anchor="middle" font-weight="bold">Frequency</text>
                </g>
             `;
         }
@@ -639,12 +675,6 @@ class PsychrometricCard extends HTMLElement {
         };
 
         chartPoints.forEach(pt => {
-            // Define candidate positions relative to point (cx, cy)
-            // 1. Top-Right (Default)
-            // 2. Bottom-Right
-            // 3. Top-Left
-            // 4. Bottom-Left
-            
             const offset = 40; 
             
             const candidates = [
@@ -731,16 +761,16 @@ class PsychrometricCard extends HTMLElement {
                 `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
             ];
 
-            const paddingText = 5;
-
+            // Use ForeignObject for Frosted Glass Effect
             labelsSvg += `
-                <g transform="translate(${boxAbsX}, ${boxAbsY})">
-                    <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="4" fill="var(--ha-card-background, #2c2c2c)" stroke="${pt.color}" stroke-width="1" fill-opacity="0.75" />
-                    <text x="${paddingText}" y="${paddingText + 12}" font-size="11" font-weight="bold" fill="${textColor}">${lines[0]}</text>
-                    <text x="${paddingText}" y="${paddingText + 26}" font-size="10" fill="${textColor}">${lines[1]}</text>
-                    <text x="${paddingText}" y="${paddingText + 38}" font-size="10" fill="${textColor}">${lines[2]}</text>
-                    <text x="${paddingText}" y="${paddingText + 50}" font-size="10" fill="${textColor}">${lines[3]}</text>
-                </g>
+                <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
+                    <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color};">
+                        <div class="label-title">${lines[0]}</div>
+                        <div class="label-row">${lines[1]}</div>
+                        <div class="label-row">${lines[2]}</div>
+                        <div class="label-row">${lines[3]}</div>
+                    </div>
+                </foreignObject>
             `;
         });
 
