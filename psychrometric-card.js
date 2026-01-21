@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.6 - Seasonal Weather Filtering
+ * Version 6.7 - Historical Ghost Trails
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.6.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.7.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -193,7 +193,10 @@ class PsychrometricCard extends HTMLElement {
         this._config = null;
         this.points = [];
         this.weatherPoints = [];
+        this.trailPoints = [];
         this.weatherLoaded = false;
+        this.historyLoading = false;
+        this.lastHistoryFetch = 0;
         this.card = null;
         this.parsedHeatmapColors = [];
     }
@@ -226,6 +229,9 @@ class PsychrometricCard extends HTMLElement {
             weather_file: config.weather_file || null,
             weather_window_days: config.weather_window_days !== undefined ? parseInt(config.weather_window_days) : 15,
             heatmap_colors: rawHeatmapColors,
+            // Trails Config
+            enable_trails: config.enable_trails !== undefined ? config.enable_trails : false,
+            trail_hours: config.trail_hours !== undefined ? parseInt(config.trail_hours) : 24,
             // Styling Config
             style: {
                 saturation: styles.saturation_line || "var(--info-color, #3b82f6)",
@@ -273,9 +279,15 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
+        // Trigger history fetch if trails enabled and not fetched recently (5 mins)
+        if (this._config.enable_trails && !this.historyLoading && (!this.lastHistoryFetch || (Date.now() - this.lastHistoryFetch > 300000))) {
+            this.fetchHistory();
+        }
+
         // Trigger redraw on data or daily change
         const todayDOY = this.getDayOfYear(new Date());
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY;
+        const trailSig = this.trailPoints ? this.trailPoints.length : 0;
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -311,6 +323,95 @@ class PsychrometricCard extends HTMLElement {
         } catch (e) {
             console.error("Psychrometric Card: Failed to load weather file", e);
         }
+    }
+
+    async fetchHistory() {
+        this.historyLoading = true;
+        const hours = this._config.trail_hours;
+        const startTime = new Date();
+        startTime.setHours(startTime.getHours() - hours);
+        const isoStart = startTime.toISOString();
+        
+        // Collect all unique entity IDs
+        const entityIds = new Set();
+        this._config.points.forEach(pt => {
+            if (pt.temperature_entity) entityIds.add(pt.temperature_entity);
+            if (pt.humidity_entity) entityIds.add(pt.humidity_entity);
+        });
+        
+        try {
+            // Fetch history from HA API
+            const historyData = await this._hass.callApi('GET', `history/period/${isoStart}?filter_entity_id=${Array.from(entityIds).join(',')}&minimal_response`);
+            this.processHistory(historyData);
+            this.lastHistoryFetch = Date.now();
+            this.drawChart();
+        } catch(e) {
+            console.error("Psychrometric Card: History fetch failed", e);
+        } finally {
+            this.historyLoading = false;
+        }
+    }
+
+    processHistory(historyData) {
+        // historyData is an array of arrays. Each inner array contains state objects for one entity.
+        const historyMap = {}; 
+        historyData.forEach(arr => {
+            if(arr.length > 0) {
+                const eid = arr[0].entity_id;
+                historyMap[eid] = arr;
+            }
+        });
+
+        this.trailPoints = []; 
+        const now = new Date();
+        const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude);
+        const duration = this._config.trail_hours * 60 * 60 * 1000;
+        const step = 1000 * 60 * 30; // 30 minutes sample step
+
+        this._config.points.forEach(ptConfig => {
+            const tHist = historyMap[ptConfig.temperature_entity];
+            const hHist = historyMap[ptConfig.humidity_entity];
+            
+            if (!tHist || !hHist) return;
+
+            const samples = [];
+            
+            // Iterate backwards from now
+            for (let time = now.getTime() - duration; time < now.getTime(); time += step) {
+                const tState = this.findStateAtTime(tHist, time);
+                const hState = this.findStateAtTime(hHist, time);
+                
+                if (tState && hState && !isNaN(parseFloat(tState.state)) && !isNaN(parseFloat(hState.state))) {
+                    const db = parseFloat(tState.state);
+                    const rh = parseFloat(hState.state);
+                    const w = PsychroMath.getWFromRelHum(db, rh, pressure);
+                    
+                    // Age 0 to 1 (1 = oldest, 0 = newest)
+                    const age = (now.getTime() - time) / duration;
+                    
+                    if (!isNaN(w) && w >= 0) {
+                        samples.push({ db, w, age });
+                    }
+                }
+            }
+            
+            if (samples.length > 0) {
+                this.trailPoints.push({
+                    color: ptConfig.color || "var(--primary-text-color)",
+                    points: samples
+                });
+            }
+        });
+    }
+
+    findStateAtTime(historyArr, timestamp) {
+        // Simple search: Find last state where last_changed <= timestamp
+        for (let i = historyArr.length - 1; i >= 0; i--) {
+            if (new Date(historyArr[i].last_changed).getTime() <= timestamp) {
+                return historyArr[i];
+            }
+        }
+        return null;
     }
 
     parseWeatherText(text) {
@@ -512,13 +613,11 @@ class PsychrometricCard extends HTMLElement {
             const windowDays = this._config.weather_window_days;
 
             this.weatherPoints.forEach(pt => {
-                // Filter by date window
                 let dist = Math.abs(pt.doy - currentDOY);
-                if (dist > 182) dist = 365 - dist; // Handle year wrap-around
+                if (dist > 182) dist = 365 - dist;
                 
                 if (dist > windowDays) return;
 
-                // Filter by chart bounds
                 if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w < humRange[0] || pt.w > humRange[1]) return;
                 
                 const xIndex = Math.floor((pt.db - tempRange[0]) / binWidthDB);
@@ -554,6 +653,7 @@ class PsychrometricCard extends HTMLElement {
         let svgContent = '';
         let pointsSvg = '';
         let labelsSvg = '';
+        let trailsSvg = '';
         
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
@@ -674,9 +774,24 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
-        // --- LAYER 3: SVG POINTS & LABELS WITH ADVANCED COLLISION ---
+        // --- LAYER 3: TRAILS ---
+        this.trailPoints.forEach(trail => {
+            trail.points.forEach(pt => {
+                if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return;
+                const cx = xScale(pt.db);
+                const cy = yScale(pt.w);
+                // Older = transparent
+                const opacity = (1 - pt.age) * 0.5;
+                if (opacity > 0.05) {
+                    trailsSvg += `<circle cx="${cx}" cy="${cy}" r="2" fill="${trail.color}" stroke="none" opacity="${opacity}" />`;
+                }
+            });
+        });
         
-        // 1. Calculate Coordinates
+        svgContent += `<g class="trails">${trailsSvg}</g>`;
+
+        // --- LAYER 4: POINTS & LABELS WITH COLLISION ---
+        
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
             return {
@@ -686,7 +801,6 @@ class PsychrometricCard extends HTMLElement {
             };
         }).filter(p => p !== null);
 
-        // Sort by Y position to naturalize stacking
         chartPoints.sort((a, b) => a.cy - b.cy);
 
         const occupied = [];
@@ -694,7 +808,6 @@ class PsychrometricCard extends HTMLElement {
         const boxH = 65;
         const padding = 5; 
 
-        // Initial occupied zones (markers)
         chartPoints.forEach(p => {
             occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 });
         });
@@ -709,21 +822,16 @@ class PsychrometricCard extends HTMLElement {
 
         chartPoints.forEach(pt => {
             const strategies = [
-                // Phase 1: Near Candidates (Offset 40)
-                { dist: 40, angle: -45 },  // TR
-                { dist: 40, angle: 45 },   // BR
-                { dist: 40, angle: -135 }, // TL
-                { dist: 40, angle: 135 },  // BL
-                
-                // Phase 2: Far Candidates (Offset 80) - when crowded
+                { dist: 40, angle: -45 },  
+                { dist: 40, angle: 45 },   
+                { dist: 40, angle: -135 }, 
+                { dist: 40, angle: 135 },  
                 { dist: 80, angle: -45 }, 
                 { dist: 80, angle: 45 },
                 { dist: 80, angle: -135 },
                 { dist: 80, angle: 135 },
-                
-                // Phase 3: Vertical/Steep (Offset 60/100) - to avoid horizontal crowding
-                { dist: 60, angle: -80 }, // Top
-                { dist: 60, angle: 80 },  // Bottom
+                { dist: 60, angle: -80 }, 
+                { dist: 60, angle: 80 },  
                 { dist: 100, angle: -80 },
                 { dist: 100, angle: 80 }
             ];
@@ -735,7 +843,6 @@ class PsychrometricCard extends HTMLElement {
                 const dx = Math.cos(rad) * strat.dist;
                 const dy = Math.sin(rad) * strat.dist;
                 
-                // Determine Box Origin based on quadrant logic
                 const boxX = (dx > 0) ? dx : (dx - boxW);
                 const boxY = (dy > 0) ? dy : (dy - boxH);
                 
@@ -755,13 +862,11 @@ class PsychrometricCard extends HTMLElement {
                 }
             }
             
-            // Fallback to default TR if completely blocked
             if (!bestCandidate) {
                  const dx = 40; const dy = -40;
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH };
             }
 
-            // Register used space
             occupied.push({
                 left: pt.cx + bestCandidate.boxX,
                 top: pt.cy + bestCandidate.boxY,
@@ -769,7 +874,6 @@ class PsychrometricCard extends HTMLElement {
                 bottom: pt.cy + bestCandidate.boxY + boxH
             });
             
-            // Draw
             const lineX2 = pt.cx + bestCandidate.dx;
             const lineY2 = pt.cy + bestCandidate.dy;
             const boxAbsX = pt.cx + bestCandidate.boxX;
@@ -778,7 +882,6 @@ class PsychrometricCard extends HTMLElement {
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
-            // Values
             const p_w = PsychroMath.getPwFromW(pt.w, pressure);
             const wb = PsychroMath.getWetBulb(pt.db, pt.w, pressure);
             const dp = PsychroMath.getDewPoint(p_w);
@@ -792,7 +895,6 @@ class PsychrometricCard extends HTMLElement {
                 `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
             ];
 
-            // Use ForeignObject for Frosted Glass Effect
             labelsSvg += `
                 <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
                     <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};">
