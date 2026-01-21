@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 7.1 - Trend Graph Refinements
+ * Version 7.2 - Extended Trend Graph
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v7.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v7.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -692,7 +692,6 @@ class PsychrometricCard extends HTMLElement {
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
 
-        // ... [Comfort Zone, Wet Bulb, Grid, Axes - Same as before] ...
         // Comfort Zone
         const met = this._config.metabolic_rate;
         const clo = this._config.clothing_level;
@@ -796,8 +795,8 @@ class PsychrometricCard extends HTMLElement {
 
         // --- NEW: ENTHALPY TREND GRAPH (Top Left) ---
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
-            const tW = 450; 
-            const tH = 220; 
+            const tW = 600; 
+            const tH = 360; 
             const tX = 10;   
             const tY = 10;   
             
