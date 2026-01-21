@@ -5,9 +5,10 @@
 
 A native, lightweight Lovelace card that renders a live **Psychrometric Chart** using real-time entity data.
 
-This card visualizes the state of air in your home against the **ASHRAE 55 Comfort Zone**. It features unlimited custom state points, color customization, and an innovative **Annual Weather Heatmap** layer driven by EPW climate files.
+This card visualizes the state of air in your home against the **ASHRAE 55 Comfort Zone**. It features unlimited custom state points, color customization, and an innovative **Seasonal Weather Heatmap** layer driven by EPW climate files.
 
-<img width="892" height="625" alt="image" src="https://github.com/user-attachments/assets/4ab6ca15-c177-4db4-9f4b-ad7928a7162f" />
+<img width="1284" height="843" alt="image" src="https://github.com/user-attachments/assets/7cc1fcd5-20fa-4feb-8b5c-8b691e8c22ef" />
+
 
 ## Features
 
@@ -62,27 +63,38 @@ points:
 
 ```yaml
 type: custom:psychrometric-card
-title: "Denver Weather Analysis"
-altitude: 5280
-# ASHRAE 55 Comfort Parameters
-clothing_level: 0.6       # 0.5 = Shorts/Tee, 1.0 = Suit
-metabolic_rate: 1.1       # 1.0 = Seated, 1.2 = Standing
-air_velocity: 40          # fpm (feet per minute)
-mean_radiant_temp_offset: 0 
-
-# Weather Heatmap
-weather_file: /local/weather/USA_CO_Denver.Intl.AP.725650_TMY3.epw
-heatmap_colors:
-  - "rgba(96, 165, 250, 0)"  # Low Freq (Transparent)
-  - "#60a5fa"                # Mid Freq (Blue)
-  - "#0f766e"                # High Freq (Teal)
-
+title: Home Climate
 points:
-  - name: "Supply Air"
-    icon: "mdi:air-conditioner"
-    temperature_entity: sensor.hvac_supply_temp
-    humidity_entity: sensor.hvac_supply_humidity
-    color: "#ef4444"
+  - name: Outside
+    temperature_entity: sensor.home_temperature
+    humidity_entity: sensor.home_relative_humidity
+    color: "#3b82f6"
+  - name: Upper Floor
+    temperature_entity: sensor.thermostat_temperature
+    humidity_entity: sensor.thermostat_humidity
+    color: "#10b981"
+  - name: Main Floor
+    temperature_entity: sensor.esphome_temp
+    humidity_entity: sensor.esphome_hum
+    color: "#ffcc00"
+clothing_level: 0.6
+metabolic_rate: 1.25
+air_velocity: 10
+altitude: 5610
+weather_file: /local/epw/local.epw
+weather_window_days: 15
+heatmap_colors:
+  - rgba(158, 210, 196, 0)
+  - rgba(158, 210, 196, .5)
+  - rgba(218, 131, 30, .5)
+chart_style:
+  saturation_line: "#9ed2c4"
+  wet_bulb_lines: "#10b981"
+  grid_lines: rgba(255, 255, 255, 0.1)
+  axis_lines: "#9ca3af"
+  comfort_zone_fill: rgba(158, 210, 196, 0.2)
+  comfort_zone_stroke: rgba(158, 210, 196, 0.6)
+  label_background: rgba(0, 0, 0, 0.5)
 ```
 
 ### Configuration Options
@@ -94,10 +106,12 @@ points:
 | `title` | string | `null` | Optional header text for the card. |
 | `show_title` | boolean | `true` | Show or hide the card header. |
 | `weather_file` | string | `null` | Path to a `.epw` file (e.g., `/local/weather.epw`) for heatmap background. |
+| `weather_window_days` | string | `15` | Number of trailing and leading days to render for seasonal weather data. |
 | `heatmap_colors` | list | `[Blue/Teal]` | List of 3 colors for the weather frequency gradient (Low, Mid, High). |
 | `clothing_level` | number | `0.5` | Insulation of clothing (clo). |
 | `metabolic_rate` | number | `1.1` | Metabolic activity level (met). |
 | `air_velocity` | number | `20` | Air speed in feet per minute (fpm). |
+| `chart_style` | list | `null` | Chart look and feel configuration. |
 
 ### Point Object
 Each item in the `points` list accepts:
@@ -107,8 +121,20 @@ Each item in the `points` list accepts:
 | `temperature_entity` | string | **Required.** The entity ID for Dry Bulb temperature (°F). |
 | `humidity_entity` | string | **Required.** The entity ID for Relative Humidity (%). |
 | `name` | string | Label shown in the legend. |
-| `icon` | string | MDI icon to display on the chart (e.g., `mdi:home`). |
 | `color` | string | CSS color for the icon and legend dot. |
+
+### Chart Style
+Each item in the `chart_style` list accepts:
+
+| Name | Type | Description |
+|:-----|:-----|:------------|
+| `saturation_line` | string | Saturation line color |
+| `wet_bulb_lines` | string | Wet Bulb Temperature line color |
+| `grid_lines` | string | Background grid line color |
+| `axis_lines` | string | Axis line color |
+| `comfort_zone_fill` | string | ASHRAE 55 Confort Zone fill color |
+| `comfort_zone_stroke` | string | ASHRAE 55 Confort Zone fill color |
+| `label_background` | string | Point label background color and opacity |
 
 ## Weather Heatmap (.epw)
 To visualize historical weather data:
