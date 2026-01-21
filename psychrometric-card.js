@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 7.0 - Enthalpy Trend Graph
+ * Version 7.1 - Trend Graph Refinements
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v7.0.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v7.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -796,10 +796,10 @@ class PsychrometricCard extends HTMLElement {
 
         // --- NEW: ENTHALPY TREND GRAPH (Top Left) ---
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
-            const tW = 300; // Trend Width
-            const tH = 120; // Trend Height
-            const tX = 0;   // Top Left X
-            const tY = 0;   // Top Left Y
+            const tW = 450; 
+            const tH = 220; 
+            const tX = 10;   
+            const tY = 10;   
             
             // 1. Calculate Scales for Trend
             let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
@@ -815,8 +815,11 @@ class PsychrometricCard extends HTMLElement {
             // Buffer
             minH -= 1; maxH += 1;
             
+            const titleOffset = 25; 
+            const graphH = tH - titleOffset;
+
             const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
-            const scaleTY = (h) => tH - ((h - minH) / (maxH - minH)) * tH; // Inverted Y for SVG
+            const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
             
             const trendGen = (data) => {
                 if (data.length === 0) return '';
@@ -830,7 +833,7 @@ class PsychrometricCard extends HTMLElement {
                 <defs>
                     <linearGradient id="trend-fade-grad" x1="0" y1="0" x2="1" y2="1">
                         <stop offset="0%" stop-color="white" stop-opacity="1"/>
-                        <stop offset="60%" stop-color="white" stop-opacity="1"/>
+                        <stop offset="50%" stop-color="white" stop-opacity="0.8"/>
                         <stop offset="100%" stop-color="white" stop-opacity="0"/>
                     </linearGradient>
                     <mask id="${maskId}">
@@ -841,20 +844,23 @@ class PsychrometricCard extends HTMLElement {
 
             // 3. Draw Trend Graph Group
             let trendLines = '';
-            // Axes
-            trendLines += `<line x1="0" y1="${tH}" x2="${tW}" y2="${tH}" stroke="${axisColor}" stroke-width="1" />`; // X
-            trendLines += `<line x1="0" y1="0" x2="0" y2="${tH}" stroke="${axisColor}" stroke-width="1" />`; // Y
-            // Title
-            trendLines += `<text x="5" y="15" font-size="10" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h)</text>`;
-            // Max/Min Y Labels
-            trendLines += `<text x="-5" y="10" font-size="9" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
-            trendLines += `<text x="-5" y="${tH}" font-size="9" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
+            
+            // Title (Bigger, padded)
+            trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h)</text>`;
+            
+            // Labels (Left side, no axis lines)
+            trendLines += `<text x="-5" y="${titleOffset + 8}" font-size="10" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
+            trendLines += `<text x="-5" y="${tH}" font-size="10" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
 
+            // Series Paths (Masked)
+            let seriesPaths = '';
             this.enthalpyHistory.forEach(series => {
-                trendLines += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="1.5" />`;
+                seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
             });
+            
+            trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
 
-            trendSvg += `<g transform="translate(${tX}, ${tY})" mask="url(#${maskId})">${trendLines}</g>`;
+            trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
 
         // --- LAYER 3: TRAILS ---
