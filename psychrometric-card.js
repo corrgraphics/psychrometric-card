@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.3 - Frosted Glass Labels & Custom Colors
+ * Version 6.4 - Configurable Frosted Labels
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.3.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.4.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -232,7 +232,8 @@ class PsychrometricCard extends HTMLElement {
                 grid: styles.grid_lines || "var(--divider-color, rgba(100, 100, 100, 0.1))",
                 axis: styles.axis_lines || "var(--secondary-text-color)",
                 comfort_stroke: styles.comfort_zone_stroke || "var(--success-color, #15803d)",
-                comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)"
+                comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)",
+                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)"
             }
         };
         this.renderContainer();
@@ -350,8 +351,7 @@ class PsychrometricCard extends HTMLElement {
                 box-sizing: border-box;
                 border: 1px solid; /* Color set inline */
                 border-radius: 4px;
-                /* Frosted Glass Effect */
-                background: rgba(var(--rgb-card-background-color, 30, 30, 30), 0.6); 
+                /* Frosted Glass Effect Base properties */
                 backdrop-filter: blur(4px);
                 -webkit-backdrop-filter: blur(4px);
                 color: var(--primary-text-color);
@@ -764,7 +764,7 @@ class PsychrometricCard extends HTMLElement {
             // Use ForeignObject for Frosted Glass Effect
             labelsSvg += `
                 <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
-                    <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color};">
+                    <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};">
                         <div class="label-title">${lines[0]}</div>
                         <div class="label-row">${lines[1]}</div>
                         <div class="label-row">${lines[2]}</div>
