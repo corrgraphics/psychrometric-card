@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.1 - Smart Label Collision Avoidance
+ * Version 6.2 - Visual Refinements (Hollow Points & Translucent Labels)
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -711,8 +711,8 @@ class PsychrometricCard extends HTMLElement {
             const boxAbsX = pt.cx + chosen.boxX;
             const boxAbsY = pt.cy + chosen.boxY;
             
-            // Draw Point
-            pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="${pt.color}" stroke="white" stroke-width="2" />`;
+            // Draw Point (Hollow)
+            pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
 
             // Draw Line
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
@@ -735,7 +735,7 @@ class PsychrometricCard extends HTMLElement {
 
             labelsSvg += `
                 <g transform="translate(${boxAbsX}, ${boxAbsY})">
-                    <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="4" fill="var(--ha-card-background, #2c2c2c)" stroke="${pt.color}" stroke-width="1" fill-opacity="0.9" />
+                    <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="4" fill="var(--ha-card-background, #2c2c2c)" stroke="${pt.color}" stroke-width="1" fill-opacity="0.75" />
                     <text x="${paddingText}" y="${paddingText + 12}" font-size="11" font-weight="bold" fill="${textColor}">${lines[0]}</text>
                     <text x="${paddingText}" y="${paddingText + 26}" font-size="10" fill="${textColor}">${lines[1]}</text>
                     <text x="${paddingText}" y="${paddingText + 38}" font-size="10" fill="${textColor}">${lines[2]}</text>
