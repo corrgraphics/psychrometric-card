@@ -1,15 +1,13 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 4.2 - Added Weather Heatmap Legend
+ * Version 6.0 - Pure SVG Rendering for Labels & Points
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v4.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.0.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
-// --- 1. COLOR UTILS (Optimized) ---
+// --- 1. COLOR UTILS ---
 const ColorUtils = {
-    // Shared canvas for parsing colors to avoid DOM thrashing
     _ctx: null,
-    
     getContext: () => {
         if (!ColorUtils._ctx) {
             const canvas = document.createElement('canvas');
@@ -18,7 +16,6 @@ const ColorUtils = {
         }
         return ColorUtils._ctx;
     },
-
     parseColor: (color) => {
         const ctx = ColorUtils.getContext();
         ctx.clearRect(0,0,1,1);
@@ -27,7 +24,6 @@ const ColorUtils = {
         const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
         return { r, g, b, a: a / 255 };
     },
-
     interpolate: (c1, c2, factor) => {
         const r = Math.round(c1.r + (c2.r - c1.r) * factor);
         const g = Math.round(c1.g + (c2.g - c1.g) * factor);
@@ -35,10 +31,7 @@ const ColorUtils = {
         const a = c1.a + (c2.a - c1.a) * factor;
         return `rgba(${r},${g},${b},${a})`;
     },
-
-    // Expects pre-parsed color objects
     getGradientColor: (intensity, parsedColors) => {
-        // intensity: 0 to 1
         if (intensity < 0.5) {
             return ColorUtils.interpolate(parsedColors[0], parsedColors[1], intensity * 2);
         } else {
@@ -94,6 +87,45 @@ const PsychroMath = {
         const den = 2830 - 1.44 * wb;
         const p_v = p_ws_wb - (num / den);
         return PsychroMath.getHumRatio(p_v, p_atm);
+    },
+
+    // --- MATH FUNCTIONS FOR LABELS ---
+    getEnthalpy: (tempF, W) => {
+        return 0.240 * tempF + W * (1061 + 0.444 * tempF);
+    },
+
+    getSpecificVolume: (tempF, W, p_atm) => {
+        const T = tempF + 459.67;
+        const P_psf = p_atm * 144;
+        const R_da = 53.352;
+        return (R_da * T * (1 + 1.6078 * W)) / P_psf;
+    },
+
+    getDewPoint: (p_w) => {
+        let dp = 50.0; 
+        for(let i=0; i<10; i++){
+            const p_guess = PsychroMath.getSatVaporPressure(dp);
+            const p_d = PsychroMath.getSatVaporPressure(dp + 0.1);
+            const deriv = (p_d - p_guess) / 0.1;
+            const error = p_guess - p_w;
+            if(Math.abs(error) < 0.0001) break;
+            dp = dp - error/deriv;
+        }
+        return dp;
+    },
+    
+    getWetBulb: (tempF, W, p_atm) => {
+        let wb = tempF;
+        const h_target = PsychroMath.getEnthalpy(tempF, W);
+        for (let i = 0; i < 20; i++) {
+            const p_ws_wb = PsychroMath.getSatVaporPressure(wb);
+            const W_star = PsychroMath.getHumRatio(p_ws_wb, p_atm);
+            const h_wb = PsychroMath.getEnthalpy(wb, W_star);
+            const error = h_wb - h_target;
+            if (Math.abs(error) < 0.05 || isNaN(error)) break;
+            wb = wb - error / 1.0; 
+        }
+        return wb;
     },
 
     // --- COMFORT ENGINE (ASHRAE 55 / PMV) ---
@@ -178,7 +210,6 @@ class PsychrometricCard extends HTMLElement {
         });
 
         const rawHeatmapColors = config.heatmap_colors || ["rgba(96, 165, 250, 0)", "#60a5fa", "#0f766e"];
-        // Pre-parse colors ONCE to prevent lag
         this.parsedHeatmapColors = rawHeatmapColors.map(c => ColorUtils.parseColor(c));
 
         this._config = {
@@ -288,18 +319,13 @@ class PsychrometricCard extends HTMLElement {
         const style = document.createElement('style');
         style.textContent = `
             :host { display: block; }
-            ha-card { overflow: hidden; }
+            ha-card { overflow: visible !important; display: block; }
             .card-content { padding: 16px; position: relative; }
             .chart-container { width: 100%; height: 0; padding-bottom: 56.25%; position: relative; }
             
-            /* Layering: Canvas bottom, SVG middle, Points top */
             canvas, svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
             canvas { pointer-events: none; z-index: 0; }
-            svg { z-index: 1; overflow: visible; }
-            
-            .points-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-            .point-marker { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; items-align: center; justify-content: center; text-align: center; }
-            .point-icon { width: 24px; height: 24px; filter: drop-shadow(0px 1px 2px rgba(0,0,0,0.5)); }
+            svg { z-index: 1; overflow: visible; font-family: var(--paper-font-body1_-_font-family, sans-serif); }
             
             .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 0.9em; justify-content: center; color: var(--primary-text-color); }
             .legend-item { display: flex; items-center; gap: 4px; }
@@ -319,22 +345,14 @@ class PsychrometricCard extends HTMLElement {
         this.chartContainer = document.createElement('div');
         this.chartContainer.className = 'chart-container';
         
-        // 1. Canvas Layer (Heatmap) - Renders fast
         this.canvasEl = document.createElement('canvas');
-        // Set high resolution for crisp rendering
         this.canvasEl.width = 1920; 
         this.canvasEl.height = 1080;
         this.chartContainer.appendChild(this.canvasEl);
 
-        // 2. SVG Layer (Lines/Text)
         this.svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         this.chartContainer.appendChild(this.svgEl);
         
-        // 3. HTML Layer (Points)
-        this.pointsContainer = document.createElement('div');
-        this.pointsContainer.className = 'points-overlay';
-        this.chartContainer.appendChild(this.pointsContainer);
-
         content.appendChild(this.chartContainer);
 
         this.legendContainer = document.createElement('div');
@@ -386,7 +404,7 @@ class PsychrometricCard extends HTMLElement {
         const xScale = (val) => ((val - tempRange[0]) / (tempRange[1] - tempRange[0])) * innerWidth;
         const yScale = (val) => innerHeight - ((val - humRange[0]) / (humRange[1] - humRange[0])) * innerHeight;
 
-        // --- PREPARE DATA FOR BOTH LAYERS ---
+        // --- PREPARE DATA ---
         const lineGen = (pts) => {
             if (pts.length === 0) return '';
             const d = pts.map((p, i) => `${i===0?'M':'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
@@ -398,39 +416,30 @@ class PsychrometricCard extends HTMLElement {
             const w = PsychroMath.getWFromRelHum(t, 100, pressure);
             satPoints.push({ x: xScale(t), y: yScale(w) });
         }
-        
-        // Complete area points (for clipping)
-        // Order: Saturation curve left-to-right, then down-right, then down-left
         const satAreaPoints = [...satPoints, { x: xScale(tempRange[1]), y: yScale(0) }, { x: xScale(tempRange[0]), y: yScale(0) }];
         
-        // Max frequency counter for legend
         let maxBinCount = 0;
 
-        // --- LAYER 1: CANVAS HEATMAP (High Performance) ---
+        // --- LAYER 1: CANVAS HEATMAP ---
         const ctx = this.canvasEl.getContext('2d');
-        // Clear canvas and handle scaling for retina/high-res
-        // We use the 1920x1080 internal resolution, mapped to CSS width
         const cWidth = this.canvasEl.width;
         const cHeight = this.canvasEl.height;
         ctx.clearRect(0, 0, cWidth, cHeight);
         
-        // Scale Factor (Canvas internal vs SVG ViewBox)
         const sfX = cWidth / width;
         const sfY = cHeight / height;
         
         if (this.weatherLoaded && this.weatherPoints.length > 0) {
             ctx.save();
-            ctx.scale(sfX, sfY); // Scale context to match SVG coordinate system
-            ctx.translate(margin.left, margin.top); // Match SVG margin
+            ctx.scale(sfX, sfY); 
+            ctx.translate(margin.left, margin.top);
 
-            // 1. Create Clipping Path (Saturation Curve)
             ctx.beginPath();
             ctx.moveTo(satAreaPoints[0].x, satAreaPoints[0].y);
             for(let i=1; i<satAreaPoints.length; i++) ctx.lineTo(satAreaPoints[i].x, satAreaPoints[i].y);
             ctx.closePath();
             ctx.clip();
 
-            // 2. Binning & Drawing
             const binWidthDB = 2.0; 
             const binHeightW = 0.0005;
             const bins = {};
@@ -444,7 +453,6 @@ class PsychrometricCard extends HTMLElement {
                 if (bins[key] > maxBinCount) maxBinCount = bins[key];
             });
 
-            // 3. Draw Rects
             const pColors = this.parsedHeatmapColors;
             Object.keys(bins).forEach(key => {
                 const [xIndex, yIndex] = key.split(',').map(Number);
@@ -457,12 +465,10 @@ class PsychrometricCard extends HTMLElement {
                 const w = xScale(db0 + binWidthDB) - x;
                 const yBottom = yScale(w1);
                 const yTop = yScale(w1 + binHeightW);
-                const h = yBottom - yTop; // y is inverted in SVG/Canvas logic here
+                const h = yBottom - yTop;
                 
                 const intensity = count / maxBinCount;
                 ctx.fillStyle = ColorUtils.getGradientColor(Math.pow(intensity, 0.5), pColors);
-                // Note: yTop is the visually top-most coordinate (smaller value), so we draw from there
-                // But rect height must be positive
                 ctx.fillRect(x, yTop, w, h);
             });
             
@@ -471,6 +477,8 @@ class PsychrometricCard extends HTMLElement {
 
         // --- LAYER 2: SVG VECTORS ---
         let svgContent = '';
+        let pointsSvg = '';
+        let labelsSvg = '';
         const textColor = "var(--primary-text-color)";
         const gridColor = "var(--divider-color, rgba(100, 100, 100, 0.1))";
         const axisColor = "var(--secondary-text-color)";
@@ -567,16 +575,13 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
         svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+40}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
-        // --- Weather Frequency Legend ---
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100;
             const legendH = 10;
             const legendX = innerWidth - legendW - 10;
             const legendY = innerHeight - 40;
-            
             const gradientId = `weather-grad-${Math.random().toString(36).substr(2, 9)}`;
-            const colors = this._config.heatmap_colors; // Use raw config strings for SVG
-
+            const colors = this._config.heatmap_colors;
             svgContent += `
                <defs>
                    <linearGradient id="${gradientId}" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -594,25 +599,81 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
-        this.svgEl.innerHTML = `<g transform="translate(${margin.left},${margin.top})">${svgContent}</g>`;
+        // --- LAYER 3: SVG POINTS & LABELS ---
         
-        // --- LAYER 3: HTML POINTS ---
-        let htmlPoints = '';
         this.points.forEach(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return;
-            const cx = xScale(pt.db) + margin.left;
-            const cy = yScale(pt.w) + margin.top;
+            const cx = xScale(pt.db);
+            const cy = yScale(pt.w);
             
-            const left = (cx / width) * 100;
-            const top = (cy / height) * 100;
+            // Point Marker (Circle)
+            pointsSvg += `<circle cx="${cx}" cy="${cy}" r="5" fill="${pt.color}" stroke="white" stroke-width="2" />`;
+
+            // Calculate Values
+            const p_w = PsychroMath.getPwFromW(pt.w, pressure);
+            const wb = PsychroMath.getWetBulb(pt.db, pt.w, pressure);
+            const dp = PsychroMath.getDewPoint(p_w);
+            const h = PsychroMath.getEnthalpy(pt.db, pt.w);
+            const w_grains = pt.w * 7000;
+
+            // Positioning Logic (Avoid Collision)
+            let dx = 40; 
+            let dy = 40; 
             
-            htmlPoints += `
-                <div class="point-marker" style="left: ${left}%; top: ${top}%;">
-                    <ha-icon icon="${pt.icon}" class="point-icon" style="color: ${pt.color};"></ha-icon>
-                </div>
+            // Flip if too close to edges
+            if (cx > innerWidth * 0.7) dx = -140; 
+            if (cy > innerHeight * 0.7) dy = -80; 
+            
+            const anchorX = cx + dx;
+            const anchorY = cy + dy;
+            
+            // Text Block content
+            const lines = [
+                pt.name,
+                `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`,
+                `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`,
+                `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
+            ];
+            
+            // Box dimensions (approx)
+            const boxW = 135;
+            const boxH = 65;
+            const padding = 5;
+            
+            // Box coordinates (relative to anchor)
+            // If dx > 0 (right side), box starts at anchorX
+            // If dx < 0 (left side), box ends at anchorX -> x = anchorX - boxW
+            const boxX = (dx > 0) ? anchorX : anchorX; 
+            const boxY = (dy > 0) ? anchorY : anchorY;
+
+            // Connector Line
+            // From point center to the nearest corner/side of the label box
+            let lineEndX = boxX;
+            let lineEndY = boxY;
+            
+            // Simple connector logic: direct line to corner of box rect
+            labelsSvg += `<line x1="${cx}" y1="${cy}" x2="${boxX}" y2="${boxY}" stroke="${pt.color}" stroke-width="1" />`;
+            
+            // Label Group
+            labelsSvg += `
+                <g transform="translate(${boxX}, ${boxY})">
+                    <!-- Background Box for readability -->
+                    <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="4" fill="var(--ha-card-background, #2c2c2c)" stroke="${pt.color}" stroke-width="1" fill-opacity="0.9" />
+                    
+                    <!-- Text Content -->
+                    <text x="${padding}" y="${padding + 12}" font-size="11" font-weight="bold" fill="${textColor}">${lines[0]}</text>
+                    <text x="${padding}" y="${padding + 26}" font-size="10" fill="${textColor}">${lines[1]}</text>
+                    <text x="${padding}" y="${padding + 38}" font-size="10" fill="${textColor}">${lines[2]}</text>
+                    <text x="${padding}" y="${padding + 50}" font-size="10" fill="${textColor}">${lines[3]}</text>
+                </g>
             `;
         });
-        this.pointsContainer.innerHTML = htmlPoints;
+
+        // Add Points & Labels to SVG
+        svgContent += `<g class="labels">${labelsSvg}</g>`;
+        svgContent += `<g class="points">${pointsSvg}</g>`;
+
+        this.svgEl.innerHTML = `<g transform="translate(${margin.left},${margin.top})">${svgContent}</g>`;
     }
 
     getCardSize() {
