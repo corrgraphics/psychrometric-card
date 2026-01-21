@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.4 - Configurable Frosted Labels
+ * Version 6.5 - Advanced Collision Avoidance
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.4.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.5.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -515,7 +515,6 @@ class PsychrometricCard extends HTMLElement {
         let pointsSvg = '';
         let labelsSvg = '';
         
-        // Colors from Config
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
         
@@ -635,9 +634,9 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
-        // --- LAYER 3: SVG POINTS & LABELS WITH COLLISION DETECTION ---
+        // --- LAYER 3: SVG POINTS & LABELS WITH ADVANCED COLLISION ---
         
-        // 1. Calculate Coordinates for all points
+        // 1. Calculate Coordinates
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
             return {
@@ -647,104 +646,96 @@ class PsychrometricCard extends HTMLElement {
             };
         }).filter(p => p !== null);
 
+        // Sort by Y position to naturalize stacking
+        chartPoints.sort((a, b) => a.cy - b.cy);
+
         const occupied = [];
         const boxW = 135;
         const boxH = 65;
-        const padding = 10; // spacing between boxes
+        const padding = 5; 
 
-        // Add points to occupied space (small exclusion zone around markers)
+        // Initial occupied zones (markers)
         chartPoints.forEach(p => {
-            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10 });
+            occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 });
         });
 
-        // Function to check collision
         const isOverlapping = (rect) => {
-            // Check chart boundaries (approximate)
             if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
-            
-            // Check existing objects
             for (let other of occupied) {
-                if (!(rect.right < other.left || 
-                      rect.left > other.right || 
-                      rect.bottom < other.top || 
-                      rect.top > other.bottom)) {
-                    return true;
-                }
+                if (!(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom)) return true;
             }
             return false;
         };
 
         chartPoints.forEach(pt => {
-            const offset = 40; 
-            
-            const candidates = [
-                // Top-Right: Line goes up-right, Box starts there
-                // SVG coords: y decreases up. so dy=-offset
-                { dx: offset, dy: -offset, boxX: offset, boxY: -offset - boxH, anchor: 'bl' }, 
-                // Bottom-Right
-                { dx: offset, dy: offset, boxX: offset, boxY: offset, anchor: 'tl' },
-                // Top-Left: Line goes up-left, Box ends there
-                { dx: -offset, dy: -offset, boxX: -offset - boxW, boxY: -offset - boxH, anchor: 'br' },
-                // Bottom-Left
-                { dx: -offset, dy: offset, boxX: -offset - boxW, boxY: offset, anchor: 'tr' }
+            const strategies = [
+                // Phase 1: Near Candidates (Offset 40)
+                { dist: 40, angle: -45 },  // TR
+                { dist: 40, angle: 45 },   // BR
+                { dist: 40, angle: -135 }, // TL
+                { dist: 40, angle: 135 },  // BL
+                
+                // Phase 2: Far Candidates (Offset 80) - when crowded
+                { dist: 80, angle: -45 }, 
+                { dist: 80, angle: 45 },
+                { dist: 80, angle: -135 },
+                { dist: 80, angle: 135 },
+                
+                // Phase 3: Vertical/Steep (Offset 60/100) - to avoid horizontal crowding
+                { dist: 60, angle: -80 }, // Top
+                { dist: 60, angle: 80 },  // Bottom
+                { dist: 100, angle: -80 },
+                { dist: 100, angle: 80 }
             ];
 
-            // Sort candidates by preference based on chart position (keep away from edges)
-            const preferLeft = pt.cx > innerWidth / 2;
-            const preferTop = pt.cy > innerHeight / 2;
+            let bestCandidate = null;
 
-            candidates.sort((a, b) => {
-                let scoreA = 0;
-                let scoreB = 0;
-                if (preferLeft && a.dx < 0) scoreA++;
-                if (!preferLeft && a.dx > 0) scoreA++;
-                if (preferTop && a.dy < 0) scoreA++;
-                if (!preferTop && a.dy > 0) scoreA++;
-
-                if (preferLeft && b.dx < 0) scoreB++;
-                if (!preferLeft && b.dx > 0) scoreB++;
-                if (preferTop && b.dy < 0) scoreB++;
-                if (!preferTop && b.dy > 0) scoreB++;
+            for (let strat of strategies) {
+                const rad = strat.angle * (Math.PI / 180);
+                const dx = Math.cos(rad) * strat.dist;
+                const dy = Math.sin(rad) * strat.dist;
                 
-                return scoreB - scoreA;
-            });
-
-            let chosen = candidates[0]; // Default to first preference
-            
-            // Try to find non-overlapping position
-            for (let cand of candidates) {
+                // Determine Box Origin based on quadrant logic
+                const boxX = (dx > 0) ? dx : (dx - boxW);
+                const boxY = (dy > 0) ? dy : (dy - boxH);
+                
+                const absBoxX = pt.cx + boxX;
+                const absBoxY = pt.cy + boxY;
+                
                 const rect = {
-                    left: pt.cx + cand.boxX - padding,
-                    top: pt.cy + cand.boxY - padding,
-                    right: pt.cx + cand.boxX + boxW + padding,
-                    bottom: pt.cy + cand.boxY + boxH + padding
+                    left: absBoxX - padding,
+                    top: absBoxY - padding,
+                    right: absBoxX + boxW + padding,
+                    bottom: absBoxY + boxH + padding
                 };
                 
                 if (!isOverlapping(rect)) {
-                    chosen = cand;
+                    bestCandidate = { dx, dy, boxX, boxY };
                     break;
                 }
             }
+            
+            // Fallback to default TR if completely blocked
+            if (!bestCandidate) {
+                 const dx = 40; const dy = -40;
+                 bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH };
+            }
 
-            // Mark chosen position as occupied (actual box size)
+            // Register used space
             occupied.push({
-                left: pt.cx + chosen.boxX,
-                top: pt.cy + chosen.boxY,
-                right: pt.cx + chosen.boxX + boxW,
-                bottom: pt.cy + chosen.boxY + boxH
+                left: pt.cx + bestCandidate.boxX,
+                top: pt.cy + bestCandidate.boxY,
+                right: pt.cx + bestCandidate.boxX + boxW,
+                bottom: pt.cy + bestCandidate.boxY + boxH
             });
-
-            // Calculate SVG Params
-            const lineX2 = pt.cx + chosen.dx;
-            const lineY2 = pt.cy + chosen.dy;
             
-            const boxAbsX = pt.cx + chosen.boxX;
-            const boxAbsY = pt.cy + chosen.boxY;
+            // Draw
+            const lineX2 = pt.cx + bestCandidate.dx;
+            const lineY2 = pt.cy + bestCandidate.dy;
+            const boxAbsX = pt.cx + bestCandidate.boxX;
+            const boxAbsY = pt.cy + bestCandidate.boxY;
             
-            // Draw Point (Hollow)
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
-
-            // Draw Line
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
             // Values
@@ -761,7 +752,6 @@ class PsychrometricCard extends HTMLElement {
                 `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
             ];
 
-            // Use ForeignObject for Frosted Glass Effect
             labelsSvg += `
                 <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
                     <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};">
@@ -774,7 +764,6 @@ class PsychrometricCard extends HTMLElement {
             `;
         });
 
-        // Add Points & Labels to SVG
         svgContent += `<g class="labels">${labelsSvg}</g>`;
         svgContent += `<g class="points">${pointsSvg}</g>`;
 
