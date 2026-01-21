@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.5 - Advanced Collision Avoidance
+ * Version 6.6 - Seasonal Weather Filtering
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.5.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.6.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -224,6 +224,7 @@ class PsychrometricCard extends HTMLElement {
             altitude: config.altitude !== undefined ? parseFloat(config.altitude) : 0,
             show_title: config.show_title !== undefined ? config.show_title : true,
             weather_file: config.weather_file || null,
+            weather_window_days: config.weather_window_days !== undefined ? parseInt(config.weather_window_days) : 15,
             heatmap_colors: rawHeatmapColors,
             // Styling Config
             style: {
@@ -272,7 +273,10 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded;
+        // Trigger redraw on data or daily change
+        const todayDOY = this.getDayOfYear(new Date());
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY;
+        
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
             this._lastDataSig = dataSig;
@@ -284,6 +288,14 @@ class PsychrometricCard extends HTMLElement {
         if (!this._hass.states[entityId]) return null;
         const val = parseFloat(this._hass.states[entityId].state);
         return isNaN(val) ? null : val;
+    }
+
+    // Helper: Day of Year (1-366)
+    getDayOfYear(date) {
+        const start = new Date(date.getFullYear(), 0, 0);
+        const diff = date - start;
+        const oneDay = 1000 * 60 * 60 * 24;
+        return Math.floor(diff / oneDay);
     }
 
     async fetchWeatherData() {
@@ -306,19 +318,32 @@ class PsychrometricCard extends HTMLElement {
         const parsedPoints = [];
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude);
         
+        // Days per month map for non-leap year (EPW standard usually)
+        const daysInMonth = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        const monthOffsets = [0];
+        for(let i=1; i<=12; i++) monthOffsets[i] = monthOffsets[i-1] + daysInMonth[i];
+
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i].trim();
             if (!line) continue;
             const cols = line.split(',');
+            // EPW: Year(0), Month(1), Day(2)
             if (cols.length > 10 && !isNaN(parseInt(cols[0]))) {
+                const month = parseInt(cols[1]);
+                const day = parseInt(cols[2]);
+                
                 const db_c = parseFloat(cols[6]);
                 const rh_percent = parseFloat(cols[8]);
                 
-                if (!isNaN(db_c) && !isNaN(rh_percent)) {
+                if (!isNaN(db_c) && !isNaN(rh_percent) && !isNaN(month) && !isNaN(day)) {
                     const db_f = db_c * 1.8 + 32;
                     const w = PsychroMath.getWFromRelHum(db_f, rh_percent, pressure);
+                    
+                    // Approximate Day of Year for EPW
+                    const doy = monthOffsets[month-1] + day;
+
                     if (!isNaN(w) && w >= 0) {
-                        parsedPoints.push({ db: db_f, w: w });
+                        parsedPoints.push({ db: db_f, w: w, doy: doy });
                     }
                 }
             }
@@ -413,7 +438,9 @@ class PsychrometricCard extends HTMLElement {
         html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> Comfort</div>`;
         
         if (this._config.weather_file) {
-             html += `<div class="legend-item"><div class="dot" style="background: linear-gradient(to right, ${this._config.heatmap_colors[1]}, ${this._config.heatmap_colors[2]})"></div> Annual Weather</div>`;
+             const days = this._config.weather_window_days;
+             const rangeText = `Seasonal Weather (+/- ${days} days)`;
+             html += `<div class="legend-item"><div class="dot" style="background: linear-gradient(to right, ${this._config.heatmap_colors[1]}, ${this._config.heatmap_colors[2]})"></div> ${rangeText}</div>`;
         }
 
         this.legendContainer.innerHTML = html;
@@ -479,8 +506,21 @@ class PsychrometricCard extends HTMLElement {
             const binHeightW = 0.0005;
             const bins = {};
 
+            // Seasonal Filtering
+            const today = new Date();
+            const currentDOY = this.getDayOfYear(today);
+            const windowDays = this._config.weather_window_days;
+
             this.weatherPoints.forEach(pt => {
+                // Filter by date window
+                let dist = Math.abs(pt.doy - currentDOY);
+                if (dist > 182) dist = 365 - dist; // Handle year wrap-around
+                
+                if (dist > windowDays) return;
+
+                // Filter by chart bounds
                 if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w < humRange[0] || pt.w > humRange[1]) return;
+                
                 const xIndex = Math.floor((pt.db - tempRange[0]) / binWidthDB);
                 const yIndex = Math.floor(pt.w / binHeightW);
                 const key = `${xIndex},${yIndex}`;
@@ -752,6 +792,7 @@ class PsychrometricCard extends HTMLElement {
                 `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
             ];
 
+            // Use ForeignObject for Frosted Glass Effect
             labelsSvg += `
                 <foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}">
                     <div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};">
