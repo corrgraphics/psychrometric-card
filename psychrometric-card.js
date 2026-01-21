@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 7.2 - Extended Trend Graph
+ * Version 0.7.3 - Trend Graph Resizing & Mask Fix
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v7.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.7.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -827,16 +827,18 @@ class PsychrometricCard extends HTMLElement {
             };
 
             // 2. Define Gradient Mask for Fade Out
+            // Use Unique ID per render
             const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
+            const gradId = `trend-fade-grad-${maskId}`;
             svgContent += `
                 <defs>
-                    <linearGradient id="trend-fade-grad" x1="0" y1="0" x2="1" y2="1">
+                    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
                         <stop offset="0%" stop-color="white" stop-opacity="1"/>
-                        <stop offset="50%" stop-color="white" stop-opacity="0.8"/>
-                        <stop offset="100%" stop-color="white" stop-opacity="0"/>
+                        <stop offset="40%" stop-color="white" stop-opacity="0.9"/>
+                        <stop offset="80%" stop-color="black" stop-opacity="0"/> 
                     </linearGradient>
                     <mask id="${maskId}">
-                        <rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#trend-fade-grad)" />
+                        <rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" />
                     </mask>
                 </defs>
             `;
@@ -934,4 +936,3 @@ class PsychrometricCard extends HTMLElement {
 }
 
 customElements.define('psychrometric-card', PsychrometricCard);
-
