@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 6.0 - Pure SVG Rendering for Labels & Points
+ * Version 6.1 - Smart Label Collision Avoidance
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v6.0.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v6.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -599,72 +599,147 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
-        // --- LAYER 3: SVG POINTS & LABELS ---
+        // --- LAYER 3: SVG POINTS & LABELS WITH COLLISION DETECTION ---
         
-        this.points.forEach(pt => {
-            if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return;
-            const cx = xScale(pt.db);
-            const cy = yScale(pt.w);
-            
-            // Point Marker (Circle)
-            pointsSvg += `<circle cx="${cx}" cy="${cy}" r="5" fill="${pt.color}" stroke="white" stroke-width="2" />`;
+        // 1. Calculate Coordinates for all points
+        const chartPoints = this.points.map(pt => {
+            if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
+            return {
+                ...pt,
+                cx: xScale(pt.db),
+                cy: yScale(pt.w)
+            };
+        }).filter(p => p !== null);
 
-            // Calculate Values
+        const occupied = [];
+        const boxW = 135;
+        const boxH = 65;
+        const padding = 10; // spacing between boxes
+
+        // Add points to occupied space (small exclusion zone around markers)
+        chartPoints.forEach(p => {
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10 });
+        });
+
+        // Function to check collision
+        const isOverlapping = (rect) => {
+            // Check chart boundaries (approximate)
+            if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
+            
+            // Check existing objects
+            for (let other of occupied) {
+                if (!(rect.right < other.left || 
+                      rect.left > other.right || 
+                      rect.bottom < other.top || 
+                      rect.top > other.bottom)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        chartPoints.forEach(pt => {
+            // Define candidate positions relative to point (cx, cy)
+            // 1. Top-Right (Default)
+            // 2. Bottom-Right
+            // 3. Top-Left
+            // 4. Bottom-Left
+            
+            const offset = 40; 
+            
+            const candidates = [
+                // Top-Right: Line goes up-right, Box starts there
+                // SVG coords: y decreases up. so dy=-offset
+                { dx: offset, dy: -offset, boxX: offset, boxY: -offset - boxH, anchor: 'bl' }, 
+                // Bottom-Right
+                { dx: offset, dy: offset, boxX: offset, boxY: offset, anchor: 'tl' },
+                // Top-Left: Line goes up-left, Box ends there
+                { dx: -offset, dy: -offset, boxX: -offset - boxW, boxY: -offset - boxH, anchor: 'br' },
+                // Bottom-Left
+                { dx: -offset, dy: offset, boxX: -offset - boxW, boxY: offset, anchor: 'tr' }
+            ];
+
+            // Sort candidates by preference based on chart position (keep away from edges)
+            const preferLeft = pt.cx > innerWidth / 2;
+            const preferTop = pt.cy > innerHeight / 2;
+
+            candidates.sort((a, b) => {
+                let scoreA = 0;
+                let scoreB = 0;
+                if (preferLeft && a.dx < 0) scoreA++;
+                if (!preferLeft && a.dx > 0) scoreA++;
+                if (preferTop && a.dy < 0) scoreA++;
+                if (!preferTop && a.dy > 0) scoreA++;
+
+                if (preferLeft && b.dx < 0) scoreB++;
+                if (!preferLeft && b.dx > 0) scoreB++;
+                if (preferTop && b.dy < 0) scoreB++;
+                if (!preferTop && b.dy > 0) scoreB++;
+                
+                return scoreB - scoreA;
+            });
+
+            let chosen = candidates[0]; // Default to first preference
+            
+            // Try to find non-overlapping position
+            for (let cand of candidates) {
+                const rect = {
+                    left: pt.cx + cand.boxX - padding,
+                    top: pt.cy + cand.boxY - padding,
+                    right: pt.cx + cand.boxX + boxW + padding,
+                    bottom: pt.cy + cand.boxY + boxH + padding
+                };
+                
+                if (!isOverlapping(rect)) {
+                    chosen = cand;
+                    break;
+                }
+            }
+
+            // Mark chosen position as occupied (actual box size)
+            occupied.push({
+                left: pt.cx + chosen.boxX,
+                top: pt.cy + chosen.boxY,
+                right: pt.cx + chosen.boxX + boxW,
+                bottom: pt.cy + chosen.boxY + boxH
+            });
+
+            // Calculate SVG Params
+            const lineX2 = pt.cx + chosen.dx;
+            const lineY2 = pt.cy + chosen.dy;
+            
+            const boxAbsX = pt.cx + chosen.boxX;
+            const boxAbsY = pt.cy + chosen.boxY;
+            
+            // Draw Point
+            pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="${pt.color}" stroke="white" stroke-width="2" />`;
+
+            // Draw Line
+            labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
+            
+            // Values
             const p_w = PsychroMath.getPwFromW(pt.w, pressure);
             const wb = PsychroMath.getWetBulb(pt.db, pt.w, pressure);
             const dp = PsychroMath.getDewPoint(p_w);
             const h = PsychroMath.getEnthalpy(pt.db, pt.w);
             const w_grains = pt.w * 7000;
 
-            // Positioning Logic (Avoid Collision)
-            let dx = 40; 
-            let dy = 40; 
-            
-            // Flip if too close to edges
-            if (cx > innerWidth * 0.7) dx = -140; 
-            if (cy > innerHeight * 0.7) dy = -80; 
-            
-            const anchorX = cx + dx;
-            const anchorY = cy + dy;
-            
-            // Text Block content
             const lines = [
                 pt.name,
                 `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`,
                 `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`,
                 `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}`
             ];
-            
-            // Box dimensions (approx)
-            const boxW = 135;
-            const boxH = 65;
-            const padding = 5;
-            
-            // Box coordinates (relative to anchor)
-            // If dx > 0 (right side), box starts at anchorX
-            // If dx < 0 (left side), box ends at anchorX -> x = anchorX - boxW
-            const boxX = (dx > 0) ? anchorX : anchorX; 
-            const boxY = (dy > 0) ? anchorY : anchorY;
 
-            // Connector Line
-            // From point center to the nearest corner/side of the label box
-            let lineEndX = boxX;
-            let lineEndY = boxY;
-            
-            // Simple connector logic: direct line to corner of box rect
-            labelsSvg += `<line x1="${cx}" y1="${cy}" x2="${boxX}" y2="${boxY}" stroke="${pt.color}" stroke-width="1" />`;
-            
-            // Label Group
+            const paddingText = 5;
+
             labelsSvg += `
-                <g transform="translate(${boxX}, ${boxY})">
-                    <!-- Background Box for readability -->
+                <g transform="translate(${boxAbsX}, ${boxAbsY})">
                     <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="4" fill="var(--ha-card-background, #2c2c2c)" stroke="${pt.color}" stroke-width="1" fill-opacity="0.9" />
-                    
-                    <!-- Text Content -->
-                    <text x="${padding}" y="${padding + 12}" font-size="11" font-weight="bold" fill="${textColor}">${lines[0]}</text>
-                    <text x="${padding}" y="${padding + 26}" font-size="10" fill="${textColor}">${lines[1]}</text>
-                    <text x="${padding}" y="${padding + 38}" font-size="10" fill="${textColor}">${lines[2]}</text>
-                    <text x="${padding}" y="${padding + 50}" font-size="10" fill="${textColor}">${lines[3]}</text>
+                    <text x="${paddingText}" y="${paddingText + 12}" font-size="11" font-weight="bold" fill="${textColor}">${lines[0]}</text>
+                    <text x="${paddingText}" y="${paddingText + 26}" font-size="10" fill="${textColor}">${lines[1]}</text>
+                    <text x="${paddingText}" y="${paddingText + 38}" font-size="10" fill="${textColor}">${lines[2]}</text>
+                    <text x="${paddingText}" y="${paddingText + 50}" font-size="10" fill="${textColor}">${lines[3]}</text>
                 </g>
             `;
         });
