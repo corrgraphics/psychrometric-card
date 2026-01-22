@@ -94,6 +94,9 @@ chart_style:
   comfort_zone_fill: rgba(158, 210, 196, 0.2)
   comfort_zone_stroke: rgba(158, 210, 196, 0.6)
   label_background: rgba(0, 0, 0, 0.5)
+enable_trails: true
+trail_hours: 12
+enthalpy_trend_hours: 24
 ```
 
 ### Configuration Options
@@ -111,6 +114,10 @@ chart_style:
 | `metabolic_rate` | number | `1.1` | Metabolic activity level (met). |
 | `air_velocity` | number | `20` | Air speed in feet per minute (fpm). |
 | `chart_style` | list | `null` | Chart look and feel configuration. |
+| `enable_trails` | boolean | `true` | Enable historical "ghost" trails to Chart. |
+| `trail_hours` | number | `12` | Number of historical hours to show. |
+| `enthalpy_trend_hours` | number | `24` | Number hours to show on enthalpy trend chart. Set to Zero to dissable. |
+| `unit_system` | string | `imperial` | Set to mertic to convert to SI units. |
 
 ### Point Object
 Each item in the `points` list accepts:
