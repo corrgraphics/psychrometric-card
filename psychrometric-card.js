@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.7.5 - Comfort Region Labels
+ * Version 0.7.6 - Comfort Zone RH Clipping & Refined Labels
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.7.5 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.7.6 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -725,12 +725,36 @@ class PsychrometricCard extends HTMLElement {
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
 
-        // Comfort Zone
+        // Create Custom RH Clip Path for Comfort Zone (20% to 80% RH Band)
+        const rhClipPathId = `rh-clip-${Math.random().toString(36).substr(2, 9)}`;
+        const rh80Points = [];
+        const rh20Points = [];
+        
+        // Generate top curve (80%)
+        for (let t = tempRange[0]; t <= tempRange[1]; t += 1.0) {
+            const w = PsychroMath.getWFromRelHum(t, 80, pressure);
+            // Cap at saturation
+            const wSat = PsychroMath.getWFromRelHum(t, 100, pressure);
+            rh80Points.push({ x: xScale(t), y: yScale(Math.min(w, wSat)) });
+        }
+        // Generate bottom curve (20%) - Reverse for closed shape
+        for (let t = tempRange[1]; t >= tempRange[0]; t -= 1.0) {
+            const w = PsychroMath.getWFromRelHum(t, 20, pressure);
+            rh20Points.push({ x: xScale(t), y: yScale(w) });
+        }
+        
+        const rhClipD = lineGen([...rh80Points, ...rh20Points]) + " Z";
+        svgContent += `<defs><clipPath id="${rhClipPathId}"><path d="${rhClipD}" /></clipPath></defs>`;
+
+        // Comfort Zone (Applied both clips via group nesting concept or direct path intersection)
+        // SVG only allows one clip-path per element. We use the RH clip here because it is stricter than saturation.
+        // (80% RH is always below 100% RH Saturation curve, so RH clip implies Saturation clip).
+        
         const met = this._config.metabolic_rate;
         const clo = this._config.clothing_level;
         const vel = this._config.air_velocity;
         const mrtOffset = this._config.mean_radiant_temp_offset;
-        const upperLine = []; const lowerLine = []; const maxW = 0.015; const wStep = 0.001;
+        const upperLine = []; const lowerLine = []; const maxW = 0.018; const wStep = 0.001; // Increased maxW to ensure it hits clip
         for (let w = 0; w <= maxW; w += wStep) {
             const findT = (targetPMV) => {
                 let low = 40, high = 100;
@@ -752,40 +776,44 @@ class PsychrometricCard extends HTMLElement {
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
         
         // --- COMFORT REGION LABELS ---
-        // Coordinates: T in F (or C converted to F), W in lb/lb
+        // Coordinates closer to center
         let rLabels = [];
         if (this.isMetric) {
+            // Approx centers for Metric
             rLabels = [
-                { t: PsychroMath.CtoF(-5), w: 0.022, text: "Cold & Humid" },
-                { t: PsychroMath.CtoF(-5), w: 0.002, text: "Cold & Dry" },
-                { t: PsychroMath.CtoF(24), w: 0.024, text: "Humid" },
-                { t: PsychroMath.CtoF(24), w: 0.002, text: "Dry" },
-                { t: PsychroMath.CtoF(38), w: 0.022, text: "Hot & Humid" },
-                { t: PsychroMath.CtoF(38), w: 0.002, text: "Hot & Dry" }
+                { t: PsychroMath.CtoF(10), w: 0.012, text: "Cold & Humid" },
+                { t: PsychroMath.CtoF(10), w: 0.004, text: "Cold & Dry" },
+                { t: PsychroMath.CtoF(24), w: 0.016, text: "Humid" },
+                { t: PsychroMath.CtoF(24), w: 0.004, text: "Dry" },
+                { t: PsychroMath.CtoF(32), w: 0.016, text: "Hot & Humid" },
+                { t: PsychroMath.CtoF(32), w: 0.006, text: "Hot & Dry" }
             ];
         } else {
+            // Imperial
             rLabels = [
-                { t: 25, w: 0.022, text: "Cold & Humid" },
-                { t: 25, w: 0.002, text: "Cold & Dry" },
-                { t: 75, w: 0.024, text: "Humid" },
-                { t: 75, w: 0.002, text: "Dry" },
-                { t: 100, w: 0.022, text: "Hot & Humid" },
-                { t: 100, w: 0.002, text: "Hot & Dry" }
+                { t: 55, w: 0.012, text: "Cold & Humid" },
+                { t: 55, w: 0.003, text: "Cold & Dry" },
+                { t: 75, w: 0.016, text: "Humid" }, // Above comfort
+                { t: 75, w: 0.004, text: "Dry" },   // Below comfort
+                { t: 92, w: 0.018, text: "Hot & Humid" },
+                { t: 92, w: 0.005, text: "Hot & Dry" }
             ];
         }
         
         let regionLabelsSvg = '';
         rLabels.forEach(lbl => {
-            // Ensure label is within chart bounds
             if (lbl.t >= tempRange[0] && lbl.t <= tempRange[1] && lbl.w <= humRange[1]) {
                const x = xScale(lbl.t);
                const y = yScale(lbl.w);
-               regionLabelsSvg += `<text x="${x}" y="${y}" text-anchor="middle" font-size="20" font-weight="bold" fill="${regionLabelColor}" opacity="0.15" style="pointer-events: none;">${lbl.text}</text>`;
+               regionLabelsSvg += `<text x="${x}" y="${y}" text-anchor="middle" font-size="12" font-weight="bold" fill="${regionLabelColor}" opacity="0.3" style="pointer-events: none;">${lbl.text}</text>`;
             }
         });
         
+        // Render Labels (Behind Comfort Zone)
         svgContent += `<g class="region-labels" clip-path="url(#${satClipPathId})">${regionLabelsSvg}</g>`;
-        svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${satClipPathId})" />`;
+        
+        // Render Comfort Zone with RH Clip
+        svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
 
         // Wet Bulb
         const wbColor = cStyle.wet_bulb;
