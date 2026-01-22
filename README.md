@@ -170,3 +170,6 @@ https://energyplus.net/weather-region/north_and_central_america_wmo_region_4/USA
 
 Visual Color Gradiant Picker
 https://cssgradient.io/
+
+Resource for determining ASHRAE 55 parameters for your space.
+https://comfort.cbe.berkeley.edu/
