@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.7.6 - Comfort Zone RH Clipping & Refined Labels
+ * Version 0.8.0 - Full Comfort Zone Outline & Legend Update
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.7.6 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -260,8 +260,7 @@ class PsychrometricCard extends HTMLElement {
                 axis: styles.axis_lines || "var(--secondary-text-color)",
                 comfort_stroke: styles.comfort_zone_stroke || "var(--success-color, #15803d)",
                 comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)",
-                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)",
-                region_labels: styles.region_labels || "var(--secondary-text-color)"
+                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)"
             }
         };
         
@@ -596,7 +595,7 @@ class PsychrometricCard extends HTMLElement {
              html += `<div class="legend-item"><div class="dot" style="background: ${color}"></div> ${name}</div>`;
         });
         
-        html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> Comfort</div>`;
+        html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> Comfort Zone</div>`;
         
         if (this._config.weather_file) {
              const days = this._config.weather_window_days;
@@ -720,7 +719,6 @@ class PsychrometricCard extends HTMLElement {
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
         const axisColor = cStyle.axis;
-        const regionLabelColor = cStyle.region_labels;
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
@@ -746,15 +744,13 @@ class PsychrometricCard extends HTMLElement {
         const rhClipD = lineGen([...rh80Points, ...rh20Points]) + " Z";
         svgContent += `<defs><clipPath id="${rhClipPathId}"><path d="${rhClipD}" /></clipPath></defs>`;
 
-        // Comfort Zone (Applied both clips via group nesting concept or direct path intersection)
-        // SVG only allows one clip-path per element. We use the RH clip here because it is stricter than saturation.
-        // (80% RH is always below 100% RH Saturation curve, so RH clip implies Saturation clip).
-        
+        // Create PMV Clip Path for RH lines (Sides clipping Top/Bottom)
+        const pmvClipPathId = `pmv-clip-${Math.random().toString(36).substr(2, 9)}`;
         const met = this._config.metabolic_rate;
         const clo = this._config.clothing_level;
         const vel = this._config.air_velocity;
         const mrtOffset = this._config.mean_radiant_temp_offset;
-        const upperLine = []; const lowerLine = []; const maxW = 0.018; const wStep = 0.001; // Increased maxW to ensure it hits clip
+        const upperLine = []; const lowerLine = []; const maxW = 0.018; const wStep = 0.001;
         for (let w = 0; w <= maxW; w += wStep) {
             const findT = (targetPMV) => {
                 let low = 40, high = 100;
@@ -774,46 +770,20 @@ class PsychrometricCard extends HTMLElement {
             lowerLine.push({ x: xScale(t_cold), y: yScale(w) }); upperLine.unshift({ x: xScale(t_hot), y: yScale(w) });
         }
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
+        svgContent += `<defs><clipPath id="${pmvClipPathId}"><path d="${polyD}" /></clipPath></defs>`;
+
+        // Render Comfort Zone with Dual Clipping Strategy
+        // 1. Fill (Use RH Clip)
+        svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="none" clip-path="url(#${rhClipPathId})" />`;
         
-        // --- COMFORT REGION LABELS ---
-        // Coordinates closer to center
-        let rLabels = [];
-        if (this.isMetric) {
-            // Approx centers for Metric
-            rLabels = [
-                { t: PsychroMath.CtoF(10), w: 0.012, text: "Cold & Humid" },
-                { t: PsychroMath.CtoF(10), w: 0.004, text: "Cold & Dry" },
-                { t: PsychroMath.CtoF(24), w: 0.016, text: "Humid" },
-                { t: PsychroMath.CtoF(24), w: 0.004, text: "Dry" },
-                { t: PsychroMath.CtoF(32), w: 0.016, text: "Hot & Humid" },
-                { t: PsychroMath.CtoF(32), w: 0.006, text: "Hot & Dry" }
-            ];
-        } else {
-            // Imperial
-            rLabels = [
-                { t: 55, w: 0.012, text: "Cold & Humid" },
-                { t: 55, w: 0.003, text: "Cold & Dry" },
-                { t: 75, w: 0.016, text: "Humid" }, // Above comfort
-                { t: 75, w: 0.004, text: "Dry" },   // Below comfort
-                { t: 92, w: 0.018, text: "Hot & Humid" },
-                { t: 92, w: 0.005, text: "Hot & Dry" }
-            ];
-        }
+        // 2. Stroke Sides (Draw PMV polygon, clipped by RH)
+        svgContent += `<path d="${polyD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
         
-        let regionLabelsSvg = '';
-        rLabels.forEach(lbl => {
-            if (lbl.t >= tempRange[0] && lbl.t <= tempRange[1] && lbl.w <= humRange[1]) {
-               const x = xScale(lbl.t);
-               const y = yScale(lbl.w);
-               regionLabelsSvg += `<text x="${x}" y="${y}" text-anchor="middle" font-size="12" font-weight="bold" fill="${regionLabelColor}" opacity="0.3" style="pointer-events: none;">${lbl.text}</text>`;
-            }
-        });
-        
-        // Render Labels (Behind Comfort Zone)
-        svgContent += `<g class="region-labels" clip-path="url(#${satClipPathId})">${regionLabelsSvg}</g>`;
-        
-        // Render Comfort Zone with RH Clip
-        svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
+        // 3. Stroke Top/Bottom (Draw RH lines, clipped by PMV)
+        const rh80LineD = lineGen(rh80Points);
+        const rh20LineD = lineGen(rh20Points.slice().reverse()); // Reverse back to L-R for line drawing if needed, or just use as is. lineGen doesn't care.
+        svgContent += `<path d="${rh80LineD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${pmvClipPathId})" />`;
+        svgContent += `<path d="${rh20LineD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${pmvClipPathId})" />`;
 
         // Wet Bulb
         const wbColor = cStyle.wet_bulb;
