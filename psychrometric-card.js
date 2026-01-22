@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.0 - Full Comfort Zone Outline & Legend Update
+ * Version 0.8.1 - Axis Spacing & Label Units
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -728,14 +728,11 @@ class PsychrometricCard extends HTMLElement {
         const rh80Points = [];
         const rh20Points = [];
         
-        // Generate top curve (80%)
         for (let t = tempRange[0]; t <= tempRange[1]; t += 1.0) {
             const w = PsychroMath.getWFromRelHum(t, 80, pressure);
-            // Cap at saturation
             const wSat = PsychroMath.getWFromRelHum(t, 100, pressure);
             rh80Points.push({ x: xScale(t), y: yScale(Math.min(w, wSat)) });
         }
-        // Generate bottom curve (20%) - Reverse for closed shape
         for (let t = tempRange[1]; t >= tempRange[0]; t -= 1.0) {
             const w = PsychroMath.getWFromRelHum(t, 20, pressure);
             rh20Points.push({ x: xScale(t), y: yScale(w) });
@@ -773,15 +770,10 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<defs><clipPath id="${pmvClipPathId}"><path d="${polyD}" /></clipPath></defs>`;
 
         // Render Comfort Zone with Dual Clipping Strategy
-        // 1. Fill (Use RH Clip)
         svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="none" clip-path="url(#${rhClipPathId})" />`;
-        
-        // 2. Stroke Sides (Draw PMV polygon, clipped by RH)
         svgContent += `<path d="${polyD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
-        
-        // 3. Stroke Top/Bottom (Draw RH lines, clipped by PMV)
         const rh80LineD = lineGen(rh80Points);
-        const rh20LineD = lineGen(rh20Points.slice().reverse()); // Reverse back to L-R for line drawing if needed, or just use as is. lineGen doesn't care.
+        const rh20LineD = lineGen(rh20Points.slice().reverse()); 
         svgContent += `<path d="${rh80LineD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${pmvClipPathId})" />`;
         svgContent += `<path d="${rh20LineD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${pmvClipPathId})" />`;
 
@@ -839,7 +831,8 @@ class PsychrometricCard extends HTMLElement {
             svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
-        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+40}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
+        // Adjusted Y label position (spacing)
+        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100; const legendH = 10; const legendX = innerWidth - legendW - 10; const legendY = innerHeight - 40;
@@ -958,7 +951,9 @@ class PsychrometricCard extends HTMLElement {
             return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
         chartPoints.sort((a, b) => a.cy - b.cy);
-        const occupied = []; const boxW = 135; const boxH = 65; const padding = 5; 
+        
+        // Increased Box Width for units
+        const occupied = []; const boxW = 170; const boxH = 65; const padding = 5; 
         chartPoints.forEach(p => { occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 }); });
         const isOverlapping = (rect) => {
             if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
@@ -1010,14 +1005,14 @@ class PsychrometricCard extends HTMLElement {
                     pt.name, 
                     `DB: ${dbC.toFixed(1)}°C | RH: ${pt.rh.toFixed(1)}%`, 
                     `WB: ${wbC.toFixed(1)}°C | DP: ${dpC.toFixed(1)}°C`, 
-                    `h: ${h_kj.toFixed(1)} | W: ${w_gkg.toFixed(1)}` 
+                    `h: ${h_kj.toFixed(1)} kJ/kg | W: ${w_gkg.toFixed(1)} g/kg` 
                 ];
             } else {
                 lines = [ 
                     pt.name, 
                     `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, 
                     `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, 
-                    `h: ${h.toFixed(1)} | W: ${w_grains.toFixed(1)}` 
+                    `h: ${h.toFixed(1)} Btu/lb | W: ${w_grains.toFixed(1)} gr/lb` 
                 ];
             }
 
