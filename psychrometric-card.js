@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.7.4 - Metric/Imperial Unit Support
+ * Version 0.7.5 - Comfort Region Labels
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.7.4 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.7.5 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -53,15 +53,11 @@ const PsychroMath = {
     FtToM: (ft) => ft / 3.28084,
 
     getPressureFromAltitude: (elevation, units = 'imperial') => {
-        // elevation: ft (IP) or m (SI)
-        // returns: psi (IP) or kPa (SI) based on input units request logic handled outside or normalized here?
-        // Let's keep core logic IP and convert.
         const ft = units === 'metric' ? PsychroMath.MToFt(elevation) : elevation;
         const psi = 14.696 * Math.pow(1 - 6.8754e-6 * ft, 5.2559);
-        return psi; // Always return PSI for internal calcs, convert for display if needed
+        return psi; 
     },
 
-    // Core saturation is pure IP (Fahrenheit -> PSI)
     getSatVaporPressure: (tempF) => {
         const T = tempF + 459.67; 
         if (tempF >= 32) {
@@ -103,12 +99,10 @@ const PsychroMath = {
         return PsychroMath.getHumRatio(p_v, p_atm);
     },
 
-    // --- MATH FUNCTIONS FOR LABELS (IP) ---
     getEnthalpyIP: (tempF, W) => {
         return 0.240 * tempF + W * (1061 + 0.444 * tempF);
     },
     
-    // SI Enthalpy (kJ/kg) - T in C, W in kg/kg
     getEnthalpySI: (tempC, W) => {
         return 1.006 * tempC + W * (2501 + 1.86 * tempC);
     },
@@ -120,7 +114,6 @@ const PsychroMath = {
         return (R_da * T * (1 + 1.6078 * W)) / P_psf;
     },
     
-    // SI Volume (m3/kg) - T in C, P in kPa
     getSpecificVolumeSI: (tempC, W, p_kpa) => {
         const T = tempC + 273.15;
         const P_pa = p_kpa * 1000;
@@ -155,7 +148,6 @@ const PsychroMath = {
         return wb;
     },
 
-    // --- COMFORT ENGINE (ASHRAE 55 / PMV) ---
     calculatePMV: (taF, trF, velFPM, rhPercent, met, clo) => {
         const ta = (taF - 32) * 5 / 9; 
         const tr = (trF - 32) * 5 / 9; 
@@ -244,7 +236,6 @@ class PsychrometricCard extends HTMLElement {
         const rawHeatmapColors = config.heatmap_colors || ["rgba(96, 165, 250, 0)", "#60a5fa", "#0f766e"];
         this.parsedHeatmapColors = rawHeatmapColors.map(c => ColorUtils.parseColor(c));
 
-        // Chart Style Defaults
         const styles = config.chart_style || {};
 
         this._config = {
@@ -258,13 +249,10 @@ class PsychrometricCard extends HTMLElement {
             weather_file: config.weather_file || null,
             weather_window_days: config.weather_window_days !== undefined ? parseInt(config.weather_window_days) : 15,
             heatmap_colors: rawHeatmapColors,
-            // Unit System
             unit_system: config.unit_system || "imperial",
-            // Trails & Trends Config
             enable_trails: config.enable_trails !== undefined ? config.enable_trails : false,
             trail_hours: config.trail_hours !== undefined ? parseInt(config.trail_hours) : 24,
             enthalpy_trend_hours: config.enthalpy_trend_hours !== undefined ? parseInt(config.enthalpy_trend_hours) : 24,
-            // Styling Config
             style: {
                 saturation: styles.saturation_line || "var(--info-color, #3b82f6)",
                 wet_bulb: styles.wet_bulb_lines || "var(--success-color, #10b981)",
@@ -272,7 +260,8 @@ class PsychrometricCard extends HTMLElement {
                 axis: styles.axis_lines || "var(--secondary-text-color)",
                 comfort_stroke: styles.comfort_zone_stroke || "var(--success-color, #15803d)",
                 comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)",
-                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)"
+                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)",
+                region_labels: styles.region_labels || "var(--secondary-text-color)"
             }
         };
         
@@ -293,7 +282,6 @@ class PsychrometricCard extends HTMLElement {
         
         if (!this._config || !this.chartContainer) return;
 
-        // Pressure is calc in PSI (IP) for logic, converted if needed for display
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
         const newPoints = [];
 
@@ -302,7 +290,6 @@ class PsychrometricCard extends HTMLElement {
             let hum = this.getEntityValue(ptConfig.humidity_entity);
             
             if (temp !== null && hum !== null) {
-                // If metric, convert input T to F for calculation engine
                 const db_calc = this.isMetric ? PsychroMath.CtoF(temp) : temp;
                 const w = PsychroMath.getWFromRelHum(db_calc, hum, pressure);
                 
@@ -310,10 +297,10 @@ class PsychrometricCard extends HTMLElement {
                     name: ptConfig.name || "Point",
                     icon: ptConfig.icon || "mdi:circle",
                     color: ptConfig.color || "var(--primary-text-color)",
-                    db: db_calc, // Store internal DB as Fahrenheit
+                    db: db_calc,
                     w: w,
                     rh: hum,
-                    originalT: temp // Keep original for reference if needed
+                    originalT: temp
                 });
             }
         });
@@ -412,10 +399,8 @@ class PsychrometricCard extends HTMLElement {
         const now = new Date();
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
         
-        // Helper to get F regardless of input
         const getValF = (val) => this.isMetric ? PsychroMath.CtoF(val) : val;
 
-        // 1. Process Trails
         if (this._config.enable_trails) {
             const duration = this._config.trail_hours * 60 * 60 * 1000;
             const step = 1000 * 60 * 30; 
@@ -446,7 +431,6 @@ class PsychrometricCard extends HTMLElement {
             });
         }
 
-        // 2. Process Enthalpy Trend
         if (this._config.enthalpy_trend_hours > 0) {
             const duration = this._config.enthalpy_trend_hours * 60 * 60 * 1000;
             const step = 1000 * 60 * 15;
@@ -518,10 +502,6 @@ class PsychrometricCard extends HTMLElement {
                 const rh_percent = parseFloat(cols[8]);
                 
                 if (!isNaN(db_c) && !isNaN(rh_percent) && !isNaN(month) && !isNaN(day)) {
-                    // EPW is always Celsius. If in Imperial mode, convert.
-                    // If in Metric mode, convert to F ONLY for internal W calc, but store appropriate display vals?
-                    // Actually, data points are stored as DB(F) and W for the chart renderer which works in F/W coords
-                    // The renderer will map F back to C scale if needed.
                     const db_f = db_c * 1.8 + 32;
                     const w = PsychroMath.getWFromRelHum(db_f, rh_percent, pressure);
                     const doy = monthOffsets[month-1] + day;
@@ -639,15 +619,10 @@ class PsychrometricCard extends HTMLElement {
         this.svgEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
         this.svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
 
-        // Determine Ranges based on Unit System
-        // Internal calculations still use IP (F, lb/lb) to leverage existing saturation math
-        // But the displayed range will map to SI
         let tempRange, humRange;
-        
         if (this.isMetric) {
-            // Map SI Range (-25C to 45C) to F for internal logic
             tempRange = [PsychroMath.CtoF(-25), PsychroMath.CtoF(45)]; 
-            humRange = [0, 0.030]; // kg/kg is same ratio as lb/lb
+            humRange = [0, 0.030]; 
         } else {
             tempRange = [-10, 110];
             humRange = [0, 0.030];
@@ -659,7 +634,6 @@ class PsychrometricCard extends HTMLElement {
         const xScale = (val) => ((val - tempRange[0]) / (tempRange[1] - tempRange[0])) * innerWidth;
         const yScale = (val) => innerHeight - ((val - humRange[0]) / (humRange[1] - humRange[0])) * innerHeight;
 
-        // --- PREPARE DATA ---
         const lineGen = (pts) => {
             if (pts.length === 0) return '';
             const d = pts.map((p, i) => `${i===0?'M':'L'} ${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
@@ -746,6 +720,7 @@ class PsychrometricCard extends HTMLElement {
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
         const axisColor = cStyle.axis;
+        const regionLabelColor = cStyle.region_labels;
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
@@ -775,6 +750,41 @@ class PsychrometricCard extends HTMLElement {
             lowerLine.push({ x: xScale(t_cold), y: yScale(w) }); upperLine.unshift({ x: xScale(t_hot), y: yScale(w) });
         }
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
+        
+        // --- COMFORT REGION LABELS ---
+        // Coordinates: T in F (or C converted to F), W in lb/lb
+        let rLabels = [];
+        if (this.isMetric) {
+            rLabels = [
+                { t: PsychroMath.CtoF(-5), w: 0.022, text: "Cold & Humid" },
+                { t: PsychroMath.CtoF(-5), w: 0.002, text: "Cold & Dry" },
+                { t: PsychroMath.CtoF(24), w: 0.024, text: "Humid" },
+                { t: PsychroMath.CtoF(24), w: 0.002, text: "Dry" },
+                { t: PsychroMath.CtoF(38), w: 0.022, text: "Hot & Humid" },
+                { t: PsychroMath.CtoF(38), w: 0.002, text: "Hot & Dry" }
+            ];
+        } else {
+            rLabels = [
+                { t: 25, w: 0.022, text: "Cold & Humid" },
+                { t: 25, w: 0.002, text: "Cold & Dry" },
+                { t: 75, w: 0.024, text: "Humid" },
+                { t: 75, w: 0.002, text: "Dry" },
+                { t: 100, w: 0.022, text: "Hot & Humid" },
+                { t: 100, w: 0.002, text: "Hot & Dry" }
+            ];
+        }
+        
+        let regionLabelsSvg = '';
+        rLabels.forEach(lbl => {
+            // Ensure label is within chart bounds
+            if (lbl.t >= tempRange[0] && lbl.t <= tempRange[1] && lbl.w <= humRange[1]) {
+               const x = xScale(lbl.t);
+               const y = yScale(lbl.w);
+               regionLabelsSvg += `<text x="${x}" y="${y}" text-anchor="middle" font-size="20" font-weight="bold" fill="${regionLabelColor}" opacity="0.15" style="pointer-events: none;">${lbl.text}</text>`;
+            }
+        });
+        
+        svgContent += `<g class="region-labels" clip-path="url(#${satClipPathId})">${regionLabelsSvg}</g>`;
         svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${satClipPathId})" />`;
 
         // Wet Bulb
@@ -782,7 +792,6 @@ class PsychrometricCard extends HTMLElement {
         const wbRange = this.isMetric ? { start: -25, end: 45, step: 5 } : { start: -10, end: 110, step: 5 };
         
         for (let wbVal = wbRange.start; wbVal <= wbRange.end; wbVal += wbRange.step) {
-            // If metric, wbVal is C, needs conversion to F for logic
             const wbF = this.isMetric ? PsychroMath.CtoF(wbVal) : wbVal;
             const pts = [];
             for (let t = wbF; t <= tempRange[1]; t += 1) {
@@ -812,42 +821,27 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Axes (Dynamic steps)
-        const tempStep = this.isMetric ? 5 : 10;
-        // Convert range bounds to display units
-        const displayStart = this.isMetric ? -25 : -10;
-        const displayEnd = this.isMetric ? 45 : 110;
-
+        // Axes
         const xTicks = [];
-        for (let t = displayStart; t <= displayEnd; t += tempStep) {
-            xTicks.push(t);
-        }
-        
+        for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
         svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         xTicks.forEach(t => {
-            const tF = this.isMetric ? PsychroMath.CtoF(t) : t;
-            const x = xScale(tF);
+            const x = xScale(t);
             svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${cStyle.axis}" />`;
             svgContent += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°${this.isMetric ? 'C' : 'F'}</text>`;
+            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
         });
-
         const yTicks = [];
         for (let w = 0; w <= humRange[1]; w += 0.005) yTicks.push(w);
         svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         yTicks.forEach(w => {
             const y = yScale(w);
-            const val = this.isMetric ? (w * 1000).toFixed(0) : (w * 7000).toFixed(0); // g/kg or gr/lb
             svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${cStyle.axis}" />`;
             svgContent += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${val}</text>`;
+            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
-
-        const xLabel = this.isMetric ? "Dry Bulb Temperature (°C)" : "Dry Bulb Temperature (°F)";
-        const yLabel = this.isMetric ? "Humidity Ratio (g/kg)" : "Humidity Ratio (grains/lb)";
-
-        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">${xLabel}</text>`;
-        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+40}" text-anchor="middle" fill="${textColor}" font-size="14">${yLabel}</text>`;
+        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
+        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+40}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100; const legendH = 10; const legendX = innerWidth - legendW - 10; const legendY = innerHeight - 40;
