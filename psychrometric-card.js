@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.1 - Axis Spacing & Label Units
+ * Version 0.8.2 - Radial Collision Avoidance
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.2 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -260,7 +260,8 @@ class PsychrometricCard extends HTMLElement {
                 axis: styles.axis_lines || "var(--secondary-text-color)",
                 comfort_stroke: styles.comfort_zone_stroke || "var(--success-color, #15803d)",
                 comfort_fill: styles.comfort_zone_fill || "rgba(34, 197, 94, 0.2)",
-                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)"
+                label_background: styles.label_background || "rgba(var(--rgb-card-background-color, 30, 30, 30), 0.3)",
+                region_labels: styles.region_labels || "var(--secondary-text-color)"
             }
         };
         
@@ -719,15 +720,15 @@ class PsychrometricCard extends HTMLElement {
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
         const axisColor = cStyle.axis;
+        const regionLabelColor = cStyle.region_labels;
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
 
-        // Create Custom RH Clip Path for Comfort Zone (20% to 80% RH Band)
+        // Custom RH Clip
         const rhClipPathId = `rh-clip-${Math.random().toString(36).substr(2, 9)}`;
         const rh80Points = [];
         const rh20Points = [];
-        
         for (let t = tempRange[0]; t <= tempRange[1]; t += 1.0) {
             const w = PsychroMath.getWFromRelHum(t, 80, pressure);
             const wSat = PsychroMath.getWFromRelHum(t, 100, pressure);
@@ -737,11 +738,10 @@ class PsychrometricCard extends HTMLElement {
             const w = PsychroMath.getWFromRelHum(t, 20, pressure);
             rh20Points.push({ x: xScale(t), y: yScale(w) });
         }
-        
         const rhClipD = lineGen([...rh80Points, ...rh20Points]) + " Z";
         svgContent += `<defs><clipPath id="${rhClipPathId}"><path d="${rhClipD}" /></clipPath></defs>`;
 
-        // Create PMV Clip Path for RH lines (Sides clipping Top/Bottom)
+        // Create PMV Clip Path
         const pmvClipPathId = `pmv-clip-${Math.random().toString(36).substr(2, 9)}`;
         const met = this._config.metabolic_rate;
         const clo = this._config.clothing_level;
@@ -831,7 +831,6 @@ class PsychrometricCard extends HTMLElement {
             svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
-        // Adjusted Y label position (spacing)
         svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
@@ -888,8 +887,6 @@ class PsychrometricCard extends HTMLElement {
                 return d;
             };
 
-            // 2. Define Gradient Mask for Fade Out
-            // Use Unique ID per render
             const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
             const gradId = `trend-fade-grad-${maskId}`;
             svgContent += `
@@ -905,26 +902,19 @@ class PsychrometricCard extends HTMLElement {
                 </defs>
             `;
 
-            // 3. Draw Trend Graph Group
             let trendLines = '';
             
             const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
-            
-            // Title (Bigger, padded)
             trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
-            
-            // Labels (Left side, no axis lines)
             trendLines += `<text x="-5" y="${titleOffset + 8}" font-size="10" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
             trendLines += `<text x="-5" y="${tH}" font-size="10" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
 
-            // Series Paths (Masked)
             let seriesPaths = '';
             this.enthalpyHistory.forEach(series => {
                 seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
             });
             
             trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
-
             trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
 
@@ -942,47 +932,120 @@ class PsychrometricCard extends HTMLElement {
         });
         
         svgContent += `<g class="trails">${trailsSvg}</g>`;
-        svgContent += `<g class="trend">${trendSvg}</g>`; // Add Trend Graph
+        svgContent += `<g class="trend">${trendSvg}</g>`; 
 
         // --- LAYER 4: POINTS & LABELS ---
-        // ... [Advanced Collision Logic from V6.5 - Same as before] ...
+        // 1. Calculate Coordinates for all points
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
-            return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
+            return {
+                ...pt,
+                cx: xScale(pt.db),
+                cy: yScale(pt.w)
+            };
         }).filter(p => p !== null);
+
+        // Sorting by Y helps, but let's sort by density? Or stick to Y.
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        // Increased Box Width for units
-        const occupied = []; const boxW = 170; const boxH = 65; const padding = 5; 
-        chartPoints.forEach(p => { occupied.push({ left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15 }); });
-        const isOverlapping = (rect) => {
-            if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
+        const occupied = []; 
+        const boxW = 170; 
+        const boxH = 65; 
+        const padding = 5; 
+
+        // Add markers to occupied zones
+        chartPoints.forEach(p => { 
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10 }); 
+        });
+
+        const getOverlapArea = (rect) => {
+            // Check chart bounds overlap (penalty)
+            let boundsPenalty = 0;
+            if (rect.left < 0) boundsPenalty += (0 - rect.left) * rect.height;
+            if (rect.right > innerWidth) boundsPenalty += (rect.right - innerWidth) * rect.height;
+            if (rect.top < 0) boundsPenalty += (0 - rect.top) * rect.width;
+            if (rect.bottom > innerHeight) boundsPenalty += (rect.bottom - innerHeight) * rect.width;
+
+            let objOverlap = 0;
             for (let other of occupied) {
-                if (!(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom)) return true;
+                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                objOverlap += x_overlap * y_overlap;
             }
-            return false;
+            return boundsPenalty + objOverlap;
         };
+
         chartPoints.forEach(pt => {
-            const strategies = [
-                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
-                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
-                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 }
+            // Generate candidates: Radii * Angles
+            const radii = [40, 60, 90, 120, 150];
+            const angles = [
+                 -45, -135, 45, 135, // Diagonals first (preferred)
+                 -90, 90,            // Vertical
+                 0, 180,             // Horizontal
+                 -20, -70, -110, -160, 20, 70, 110, 160 // Intermediates
             ];
+            
             let bestCandidate = null;
-            for (let strat of strategies) {
-                const rad = strat.angle * (Math.PI / 180);
-                const dx = Math.cos(rad) * strat.dist;
-                const dy = Math.sin(rad) * strat.dist;
-                const boxX = (dx > 0) ? dx : (dx - boxW);
-                const boxY = (dy > 0) ? dy : (dy - boxH);
-                const absBoxX = pt.cx + boxX;
-                const absBoxY = pt.cy + boxY;
-                const rect = { left: absBoxX - padding, top: absBoxY - padding, right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding };
-                if (!isOverlapping(rect)) { bestCandidate = { dx, dy, boxX, boxY }; break; }
+            let minOverlap = Infinity;
+
+            for (let r of radii) {
+                for (let ang of angles) {
+                    const rad = ang * (Math.PI / 180);
+                    const dx = Math.cos(rad) * r;
+                    const dy = Math.sin(rad) * r;
+                    
+                    const boxX = (dx > 0) ? dx : (dx - boxW);
+                    const boxY = (dy > 0) ? dy : (dy - boxH);
+                    
+                    const absBoxX = pt.cx + boxX;
+                    const absBoxY = pt.cy + boxY;
+                    
+                    const rect = { 
+                        left: absBoxX - padding, 
+                        top: absBoxY - padding, 
+                        right: absBoxX + boxW + padding, 
+                        bottom: absBoxY + boxH + padding,
+                        width: boxW + 2*padding,
+                        height: boxH + 2*padding
+                    };
+                    
+                    const overlap = getOverlapArea(rect);
+                    
+                    if (overlap === 0) {
+                        // Found a free spot!
+                        bestCandidate = { dx, dy, boxX, boxY };
+                        minOverlap = 0;
+                        break; 
+                    }
+                    
+                    if (overlap < minOverlap) {
+                        minOverlap = overlap;
+                        bestCandidate = { dx, dy, boxX, boxY };
+                    }
+                }
+                if (minOverlap === 0) break;
             }
-            if (!bestCandidate) { const dx = 40; const dy = -40; bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; }
-            occupied.push({ left: pt.cx + bestCandidate.boxX, top: pt.cy + bestCandidate.boxY, right: pt.cx + bestCandidate.boxX + boxW, bottom: pt.cy + bestCandidate.boxY + boxH });
-            const lineX2 = pt.cx + bestCandidate.dx; const lineY2 = pt.cy + bestCandidate.dy; const boxAbsX = pt.cx + bestCandidate.boxX; const boxAbsY = pt.cy + bestCandidate.boxY;
+            
+            // Fallback (should have been set by loop, but safe guard)
+            if (!bestCandidate) { 
+                 const dx = 40; const dy = -40; 
+                 bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; 
+            }
+
+            // Register used space
+            occupied.push({
+                left: pt.cx + bestCandidate.boxX,
+                top: pt.cy + bestCandidate.boxY,
+                right: pt.cx + bestCandidate.boxX + boxW,
+                bottom: pt.cy + bestCandidate.boxY + boxH
+            });
+            
+            // Draw
+            const lineX2 = pt.cx + bestCandidate.dx;
+            const lineY2 = pt.cy + bestCandidate.dy;
+            const boxAbsX = pt.cx + bestCandidate.boxX;
+            const boxAbsY = pt.cy + bestCandidate.boxY;
+            
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
@@ -994,7 +1057,6 @@ class PsychrometricCard extends HTMLElement {
 
             let lines;
             if (this.isMetric) {
-                // Convert for display
                 const dbC = PsychroMath.FtoC(pt.db);
                 const wbC = PsychroMath.FtoC(wb);
                 const dpC = PsychroMath.FtoC(dp);
