@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.2 - Radial Collision Avoidance
+ * Version 0.8.3 - Line Crossing Prevention
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.2 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -769,7 +769,7 @@ class PsychrometricCard extends HTMLElement {
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
         svgContent += `<defs><clipPath id="${pmvClipPathId}"><path d="${polyD}" /></clipPath></defs>`;
 
-        // Render Comfort Zone with Dual Clipping Strategy
+        // Render Comfort Zone
         svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="none" clip-path="url(#${rhClipPathId})" />`;
         svgContent += `<path d="${polyD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
         const rh80LineD = lineGen(rh80Points);
@@ -854,14 +854,9 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
 
-        // --- NEW: ENTHALPY TREND GRAPH (Top Left) ---
+        // Enthalpy Trend
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
-            const tW = 500; 
-            const tH = 300; 
-            const tX = 10;   
-            const tY = 10;   
-            
-            // 1. Calculate Scales for Trend
+            const tW = 500; const tH = 300; const tX = 10; const tY = 10;
             let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
             this.enthalpyHistory.forEach(series => {
                 series.data.forEach(d => {
@@ -872,53 +867,33 @@ class PsychrometricCard extends HTMLElement {
                     if (t > maxTime) maxTime = t;
                 });
             });
-            // Buffer
             minH -= 1; maxH += 1;
-            
             const titleOffset = 25; 
             const graphH = tH - titleOffset;
-
             const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
             const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
-            
             const trendGen = (data) => {
                 if (data.length === 0) return '';
                 const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
                 return d;
             };
-
             const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
             const gradId = `trend-fade-grad-${maskId}`;
-            svgContent += `
-                <defs>
-                    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0%" stop-color="white" stop-opacity="1"/>
-                        <stop offset="40%" stop-color="white" stop-opacity="0.9"/>
-                        <stop offset="80%" stop-color="black" stop-opacity="0"/> 
-                    </linearGradient>
-                    <mask id="${maskId}">
-                        <rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" />
-                    </mask>
-                </defs>
-            `;
-
+            svgContent += `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="white" stop-opacity="1"/><stop offset="40%" stop-color="white" stop-opacity="0.9"/><stop offset="80%" stop-color="black" stop-opacity="0"/></linearGradient><mask id="${maskId}"><rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" /></mask></defs>`;
             let trendLines = '';
-            
             const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
             trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
             trendLines += `<text x="-5" y="${titleOffset + 8}" font-size="10" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
             trendLines += `<text x="-5" y="${tH}" font-size="10" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
-
             let seriesPaths = '';
             this.enthalpyHistory.forEach(series => {
                 seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
             });
-            
             trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
             trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
 
-        // --- LAYER 3: TRAILS ---
+        // Trails
         this.trailPoints.forEach(trail => {
             trail.points.forEach(pt => {
                 if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return;
@@ -935,117 +910,96 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<g class="trend">${trendSvg}</g>`; 
 
         // --- LAYER 4: POINTS & LABELS ---
-        // 1. Calculate Coordinates for all points
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
-            return {
-                ...pt,
-                cx: xScale(pt.db),
-                cy: yScale(pt.w)
-            };
+            return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
-
-        // Sorting by Y helps, but let's sort by density? Or stick to Y.
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        const occupied = []; 
-        const boxW = 170; 
-        const boxH = 65; 
-        const padding = 5; 
-
-        // Add markers to occupied zones
+        const occupied = []; const boxW = 170; const boxH = 65; const padding = 5; 
+        
+        // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
-            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10 }); 
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
         });
 
-        const getOverlapArea = (rect) => {
-            // Check chart bounds overlap (penalty)
-            let boundsPenalty = 0;
-            if (rect.left < 0) boundsPenalty += (0 - rect.left) * rect.height;
-            if (rect.right > innerWidth) boundsPenalty += (rect.right - innerWidth) * rect.height;
-            if (rect.top < 0) boundsPenalty += (0 - rect.top) * rect.width;
-            if (rect.bottom > innerHeight) boundsPenalty += (rect.bottom - innerHeight) * rect.width;
+        // Intersection Helper
+        const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
+            const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
+                const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
+                if (det === 0) return false;
+                const lambda = ((p4y - p3y) * (p4x - p1x) + (p3x - p4x) * (p4y - p1y)) / det;
+                const gamma = ((p1y - p2y) * (p4x - p1x) + (p2x - p1x) * (p4y - p1y)) / det;
+                return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
+            };
+            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.right, rect.top)) return true;
+            if (intersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.right, rect.bottom)) return true;
+            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.left, rect.bottom)) return true;
+            if (intersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom)) return true;
+            return false;
+        };
 
-            let objOverlap = 0;
+        const isOverlapping = (rect) => {
+            if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
             for (let other of occupied) {
-                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                objOverlap += x_overlap * y_overlap;
+                // Check if box overlaps other box
+                if (!(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom)) return true;
             }
-            return boundsPenalty + objOverlap;
+            return false;
+        };
+        
+        const isLineCrossing = (x1, y1, x2, y2) => {
+             for (let obj of occupied) {
+                 if (obj.type === 'label') { // Only prevent crossing through text boxes
+                     if (lineIntersectsRect(x1, y1, x2, y2, obj)) return true;
+                 }
+             }
+             return false;
         };
 
         chartPoints.forEach(pt => {
-            // Generate candidates: Radii * Angles
-            const radii = [40, 60, 90, 120, 150];
-            const angles = [
-                 -45, -135, 45, 135, // Diagonals first (preferred)
-                 -90, 90,            // Vertical
-                 0, 180,             // Horizontal
-                 -20, -70, -110, -160, 20, 70, 110, 160 // Intermediates
+            const strategies = [
+                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
+                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
+                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 }
             ];
-            
             let bestCandidate = null;
-            let minOverlap = Infinity;
-
-            for (let r of radii) {
-                for (let ang of angles) {
-                    const rad = ang * (Math.PI / 180);
-                    const dx = Math.cos(rad) * r;
-                    const dy = Math.sin(rad) * r;
-                    
-                    const boxX = (dx > 0) ? dx : (dx - boxW);
-                    const boxY = (dy > 0) ? dy : (dy - boxH);
-                    
-                    const absBoxX = pt.cx + boxX;
-                    const absBoxY = pt.cy + boxY;
-                    
-                    const rect = { 
-                        left: absBoxX - padding, 
-                        top: absBoxY - padding, 
-                        right: absBoxX + boxW + padding, 
-                        bottom: absBoxY + boxH + padding,
-                        width: boxW + 2*padding,
-                        height: boxH + 2*padding
-                    };
-                    
-                    const overlap = getOverlapArea(rect);
-                    
-                    if (overlap === 0) {
-                        // Found a free spot!
-                        bestCandidate = { dx, dy, boxX, boxY };
-                        minOverlap = 0;
+            for (let strat of strategies) {
+                const rad = strat.angle * (Math.PI / 180);
+                const dx = Math.cos(rad) * strat.dist;
+                const dy = Math.sin(rad) * strat.dist;
+                const boxX = (dx > 0) ? dx : (dx - boxW);
+                const boxY = (dy > 0) ? dy : (dy - boxH);
+                const absBoxX = pt.cx + boxX;
+                const absBoxY = pt.cy + boxY;
+                const rect = { 
+                    left: absBoxX - padding, top: absBoxY - padding, 
+                    right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding 
+                };
+                
+                // Check 1: Box Overlap
+                if (!isOverlapping(rect)) { 
+                    // Check 2: Line Crossing
+                    const lineX2 = pt.cx + dx;
+                    const lineY2 = pt.cy + dy;
+                    if (!isLineCrossing(pt.cx, pt.cy, lineX2, lineY2)) {
+                        bestCandidate = { dx, dy, boxX, boxY }; 
                         break; 
                     }
-                    
-                    if (overlap < minOverlap) {
-                        minOverlap = overlap;
-                        bestCandidate = { dx, dy, boxX, boxY };
-                    }
                 }
-                if (minOverlap === 0) break;
             }
+            if (!bestCandidate) { const dx = 40; const dy = -40; bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; }
             
-            // Fallback (should have been set by loop, but safe guard)
-            if (!bestCandidate) { 
-                 const dx = 40; const dy = -40; 
-                 bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; 
-            }
-
-            // Register used space
-            occupied.push({
-                left: pt.cx + bestCandidate.boxX,
-                top: pt.cy + bestCandidate.boxY,
-                right: pt.cx + bestCandidate.boxX + boxW,
-                bottom: pt.cy + bestCandidate.boxY + boxH
+            // Add final box to occupied list as 'label'
+            occupied.push({ 
+                left: pt.cx + bestCandidate.boxX, 
+                top: pt.cy + bestCandidate.boxY, 
+                right: pt.cx + bestCandidate.boxX + boxW, 
+                bottom: pt.cy + bestCandidate.boxY + boxH,
+                type: 'label' 
             });
             
-            // Draw
-            const lineX2 = pt.cx + bestCandidate.dx;
-            const lineY2 = pt.cy + bestCandidate.dy;
-            const boxAbsX = pt.cx + bestCandidate.boxX;
-            const boxAbsY = pt.cy + bestCandidate.boxY;
-            
+            const lineX2 = pt.cx + bestCandidate.dx; const lineY2 = pt.cy + bestCandidate.dy; const boxAbsX = pt.cx + bestCandidate.boxX; const boxAbsY = pt.cy + bestCandidate.boxY;
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
@@ -1062,20 +1016,9 @@ class PsychrometricCard extends HTMLElement {
                 const dpC = PsychroMath.FtoC(dp);
                 const w_gkg = pt.w * 1000;
                 const h_kj = PsychroMath.getEnthalpySI(dbC, pt.w);
-                
-                lines = [ 
-                    pt.name, 
-                    `DB: ${dbC.toFixed(1)}°C | RH: ${pt.rh.toFixed(1)}%`, 
-                    `WB: ${wbC.toFixed(1)}°C | DP: ${dpC.toFixed(1)}°C`, 
-                    `h: ${h_kj.toFixed(1)} kJ/kg | W: ${w_gkg.toFixed(1)} g/kg` 
-                ];
+                lines = [ pt.name, `DB: ${dbC.toFixed(1)}°C | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wbC.toFixed(1)}°C | DP: ${dpC.toFixed(1)}°C`, `h: ${h_kj.toFixed(1)} kJ/kg | W: ${w_gkg.toFixed(1)} g/kg` ];
             } else {
-                lines = [ 
-                    pt.name, 
-                    `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, 
-                    `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, 
-                    `h: ${h.toFixed(1)} Btu/lb | W: ${w_grains.toFixed(1)} gr/lb` 
-                ];
+                lines = [ pt.name, `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, `h: ${h.toFixed(1)} Btu/lb | W: ${w_grains.toFixed(1)} gr/lb` ];
             }
 
             labelsSvg += `<foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}"><div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};"><div class="label-title">${lines[0]}</div><div class="label-row">${lines[1]}</div><div class="label-row">${lines[2]}</div><div class="label-row">${lines[3]}</div></div></foreignObject>`;
