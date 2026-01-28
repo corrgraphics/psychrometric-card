@@ -47,12 +47,10 @@ title: "Home Climate"
 altitude: 1000  # Elevation in feet
 points:
   - name: "Living Room"
-    icon: "mdi:sofa"
     temperature_entity: sensor.living_room_temperature
     humidity_entity: sensor.living_room_humidity
     color: "#10b981"
   - name: "Outside"
-    icon: "mdi:tree"
     temperature_entity: sensor.outdoor_temperature
     humidity_entity: sensor.outdoor_humidity
     color: "#3b82f6"
