@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.4 - Cost-Based Label Positioning
+ * Version 0.8.5 - Loading Indicator & Collision Padding
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.4 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.5 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -313,7 +313,8 @@ class PsychrometricCard extends HTMLElement {
         const todayDOY = this.getDayOfYear(new Date());
         const trailSig = this.trailPoints ? this.trailPoints.length : 0;
         const trendSig = this.enthalpyHistory ? this.enthalpyHistory.length : 0;
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric;
+        const loadingSig = this.historyLoading;
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -352,6 +353,8 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
+        this.drawChart(); // Redraw to show loading state
+        
         const hours = Math.max(
             this._config.enable_trails ? this._config.trail_hours : 0, 
             this._config.enthalpy_trend_hours || 0
@@ -359,6 +362,7 @@ class PsychrometricCard extends HTMLElement {
         
         if (hours <= 0) {
             this.historyLoading = false;
+            this.drawChart();
             return;
         }
 
@@ -376,11 +380,11 @@ class PsychrometricCard extends HTMLElement {
             const historyData = await this._hass.callApi('GET', `history/period/${isoStart}?filter_entity_id=${Array.from(entityIds).join(',')}&minimal_response`);
             this.processHistory(historyData);
             this.lastHistoryFetch = Date.now();
-            this.drawChart();
         } catch(e) {
             console.error("Psychrometric Card: History fetch failed", e);
         } finally {
             this.historyLoading = false;
+            this.drawChart();
         }
     }
 
@@ -551,6 +555,15 @@ class PsychrometricCard extends HTMLElement {
             }
             .label-row { white-space: nowrap; }
             .label-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
+
+            /* Loading Animation */
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
+            }
+            .loading-text {
+                animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            }
         `;
 
         this.shadowRoot.appendChild(style);
@@ -853,6 +866,11 @@ class PsychrometricCard extends HTMLElement {
                </g>
             `;
         }
+        
+        // --- LOADING INDICATOR ---
+        if (this.historyLoading) {
+            svgContent += `<text x="20" y="40" font-size="12" fill="${textColor}" class="loading-text">Loading history data...</text>`;
+        }
 
         // Enthalpy Trend
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
@@ -916,57 +934,20 @@ class PsychrometricCard extends HTMLElement {
         }).filter(p => p !== null);
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        const occupied = []; 
-        const boxW = 170; 
-        const boxH = 65; 
-        const padding = 5; 
+        // Increased box size
+        const boxW = 170; const boxH = 65; 
+        const padding = 15; // Increased padding for collision check
         
-        // Add markers to occupied zones with type
+        const occupied = []; 
         chartPoints.forEach(p => { 
             occupied.push({ 
-                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
+                left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15, 
                 type: 'point',
                 center: { x: p.cx, y: p.cy }
             }); 
         });
 
-        // Calculate Cost Function
-        const calculateCost = (rect, pOrigin) => {
-            let cost = 0;
-            
-            // 1. Chart Boundaries (Extreme Penalty)
-            if (rect.left < 0) cost += 10000;
-            if (rect.right > innerWidth) cost += 10000;
-            if (rect.top < 0) cost += 10000;
-            if (rect.bottom > innerHeight) cost += 10000;
-
-            // 2. Overlap with Existing Objects
-            for (let other of occupied) {
-                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                
-                if (x_overlap > 0 && y_overlap > 0) {
-                    const area = x_overlap * y_overlap;
-                    if (other.type === 'point') cost += area * 50; // Heavy penalty for overlapping markers
-                    else cost += area * 10; // Medium penalty for overlapping labels
-                }
-            }
-            
-            // 3. Line Intersection Check (Does my leader line cut through a label?)
-            // Line from pOrigin to rect center/closest corner
-            // Simplified check against all 'label' type occupied rects
-            for (let other of occupied) {
-                if (other.type === 'label') {
-                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 5000; // Major penalty for crossing existing label
-                     }
-                }
-            }
-
-            return cost;
-        };
-
-        // Line intersection Helper
+        // Intersection Helper
         const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
             const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
                 const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
@@ -982,14 +963,37 @@ class PsychrometricCard extends HTMLElement {
             return false;
         };
 
+        const calculateCost = (rect, pOrigin) => {
+            let cost = 0;
+            // Bounds check
+            if (rect.left < 0) cost += 10000;
+            if (rect.right > innerWidth) cost += 10000;
+            if (rect.top < 0) cost += 10000;
+            if (rect.bottom > innerHeight) cost += 10000;
+
+            for (let other of occupied) {
+                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                if (x_overlap > 0 && y_overlap > 0) {
+                    const area = x_overlap * y_overlap;
+                    if (other.type === 'point') cost += area * 100; // Increase Point penalty
+                    else cost += area * 50; // Increase Label overlap penalty
+                }
+                
+                // Line intersection check
+                if (other.type === 'label') {
+                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
+                         cost += 5000;
+                     }
+                }
+            }
+            return cost;
+        };
+
         chartPoints.forEach(pt => {
-            // Generate many candidates (Radii * Angles)
-            const radii = [40, 70, 100, 140];
-            const angles = [
-                 -45, -135, 45, 135, // Diagonals
-                 -90, 90,            // Vertical
-                 0, 180              // Horizontal
-            ];
+            // Updated strategies with more layers
+            const radii = [40, 80, 120, 160];
+            const angles = [ -45, -135, 45, 135, -90, 90, 0, 180, -20, -70, -110, -160, 20, 70, 110, 160 ];
             
             let bestCandidate = null;
             let minCost = Infinity;
@@ -1005,9 +1009,6 @@ class PsychrometricCard extends HTMLElement {
                     
                     const absBoxX = pt.cx + boxX;
                     const absBoxY = pt.cy + boxY;
-                    
-                    // The line goes to the corner/side of the box closest to the point
-                    // Simplified: Line goes to the point on the box rect closest to pt
                     const anchorX = pt.cx + dx;
                     const anchorY = pt.cy + dy;
 
@@ -1021,9 +1022,7 @@ class PsychrometricCard extends HTMLElement {
                         anchorX, anchorY
                     };
                     
-                    // Distance penalty (prefer closer)
-                    const distCost = r * 0.5;
-                    
+                    const distCost = r * 0.1; // Reduced distance penalty
                     const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
                     const totalCost = placementCost + distCost;
                     
@@ -1031,19 +1030,16 @@ class PsychrometricCard extends HTMLElement {
                         minCost = totalCost;
                         bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
                     }
-                    
-                    if (minCost === 0) break; // Found perfect spot
+                    if (minCost === 0) break; 
                 }
-                if (minCost < 10) break; // Found good enough spot
+                if (minCost < 5) break; 
             }
             
-            // Fallback
             if (!bestCandidate) { 
                  const dx = 40; const dy = -40; 
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
             }
             
-            // Register used space
             occupied.push({ 
                 left: pt.cx + bestCandidate.boxX, 
                 top: pt.cy + bestCandidate.boxY, 
