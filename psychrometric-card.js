@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.5 - Loading Indicator & Collision Padding
+ * Version 0.8.6 - Cleaned Grid & Trend Guidelines
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.5 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.6 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -313,8 +313,7 @@ class PsychrometricCard extends HTMLElement {
         const todayDOY = this.getDayOfYear(new Date());
         const trailSig = this.trailPoints ? this.trailPoints.length : 0;
         const trendSig = this.enthalpyHistory ? this.enthalpyHistory.length : 0;
-        const loadingSig = this.historyLoading;
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -353,8 +352,6 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
-        this.drawChart(); // Redraw to show loading state
-        
         const hours = Math.max(
             this._config.enable_trails ? this._config.trail_hours : 0, 
             this._config.enthalpy_trend_hours || 0
@@ -362,7 +359,6 @@ class PsychrometricCard extends HTMLElement {
         
         if (hours <= 0) {
             this.historyLoading = false;
-            this.drawChart();
             return;
         }
 
@@ -380,11 +376,11 @@ class PsychrometricCard extends HTMLElement {
             const historyData = await this._hass.callApi('GET', `history/period/${isoStart}?filter_entity_id=${Array.from(entityIds).join(',')}&minimal_response`);
             this.processHistory(historyData);
             this.lastHistoryFetch = Date.now();
+            this.drawChart();
         } catch(e) {
             console.error("Psychrometric Card: History fetch failed", e);
         } finally {
             this.historyLoading = false;
-            this.drawChart();
         }
     }
 
@@ -729,11 +725,13 @@ class PsychrometricCard extends HTMLElement {
         let labelsSvg = '';
         let trailsSvg = '';
         let trendSvg = '';
+        let gridLinesSvg = ''; 
         
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
         const axisColor = cStyle.axis;
         const regionLabelColor = cStyle.region_labels;
+        const gridColor = cStyle.grid;
         
         const satClipPathId = `sat-clip-${Math.random().toString(36).substr(2, 9)}`;
         svgContent += `<defs><clipPath id="${satClipPathId}"><path d="${lineGen(satAreaPoints)} Z" /></clipPath></defs>`;
@@ -782,7 +780,7 @@ class PsychrometricCard extends HTMLElement {
         const polyD = lineGen([...lowerLine, ...upperLine]) + " Z";
         svgContent += `<defs><clipPath id="${pmvClipPathId}"><path d="${polyD}" /></clipPath></defs>`;
 
-        // Render Comfort Zone
+        // Render Comfort Zone with Dual Clipping Strategy
         svgContent += `<path d="${polyD}" fill="${cStyle.comfort_fill}" stroke="none" clip-path="url(#${rhClipPathId})" />`;
         svgContent += `<path d="${polyD}" fill="none" stroke="${cStyle.comfort_stroke}" stroke-width="1" clip-path="url(#${rhClipPathId})" />`;
         const rh80LineD = lineGen(rh80Points);
@@ -808,7 +806,7 @@ class PsychrometricCard extends HTMLElement {
             }
         }
 
-        // Grid
+        // Grid (RH Curves)
         [20, 40, 60, 80, 100].forEach(rh => {
             const pts = [];
             for (let t = tempRange[0]; t <= tempRange[1]; t += 1) {
@@ -824,25 +822,37 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Axes
+        // Axes & Basic Grid (Now Clipped for supersaturation)
         const xTicks = [];
         for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
-        svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
+        
         xTicks.forEach(t => {
             const x = xScale(t);
+            // Axis Tick (Outside clip)
             svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${cStyle.axis}" />`;
-            svgContent += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
+            // Grid Line (Inside clip - collected for group)
+            gridLinesSvg += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
         });
+
         const yTicks = [];
         for (let w = 0; w <= humRange[1]; w += 0.005) yTicks.push(w);
-        svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
+        
         yTicks.forEach(w => {
             const y = yScale(w);
+            // Axis Tick (Outside clip)
             svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${cStyle.axis}" />`;
-            svgContent += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
+            // Grid Line (Inside clip - collected for group)
+            gridLinesSvg += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
             svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
+        
+        // Add Clipped Grid Lines Group
+        svgContent += `<g clip-path="url(#${satClipPathId})">${gridLinesSvg}</g>`;
+        // Add Axes Lines
+        svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
+        svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
+
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
         svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
@@ -903,6 +913,15 @@ class PsychrometricCard extends HTMLElement {
             trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
             trendLines += `<text x="-5" y="${titleOffset + 8}" font-size="10" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
             trendLines += `<text x="-5" y="${tH}" font-size="10" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
+
+            // Draw Trend Guidelines (Dashed)
+            const hRange = maxH - minH;
+            const step = hRange <= 10 ? 2 : 5; // dynamic step
+            for (let h = Math.ceil(minH / step) * step; h < maxH; h += step) {
+                const y = scaleTY(h);
+                trendLines += `<line x1="0" y1="${y}" x2="${tW}" y2="${y}" stroke="${gridColor}" stroke-dasharray="4,4" stroke-width="0.5" />`;
+            }
+
             let seriesPaths = '';
             this.enthalpyHistory.forEach(series => {
                 seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
@@ -934,14 +953,12 @@ class PsychrometricCard extends HTMLElement {
         }).filter(p => p !== null);
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        // Increased box size
-        const boxW = 170; const boxH = 65; 
-        const padding = 15; // Increased padding for collision check
+        const occupied = []; const boxW = 170; const boxH = 65; const padding = 15; 
         
-        const occupied = []; 
+        // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
             occupied.push({ 
-                left: p.cx - 15, top: p.cy - 15, right: p.cx + 15, bottom: p.cy + 15, 
+                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
                 type: 'point',
                 center: { x: p.cx, y: p.cy }
             }); 
@@ -991,48 +1008,49 @@ class PsychrometricCard extends HTMLElement {
         };
 
         chartPoints.forEach(pt => {
-            // Updated strategies with more layers
-            const radii = [40, 80, 120, 160];
-            const angles = [ -45, -135, 45, 135, -90, 90, 0, 180, -20, -70, -110, -160, 20, 70, 110, 160 ];
-            
+            const strategies = [
+                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
+                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
+                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 },
+                { dist: 120, angle: -45 }, { dist: 120, angle: 45 }, { dist: 160, angle: -45 }
+            ];
             let bestCandidate = null;
             let minCost = Infinity;
 
-            for (let r of radii) {
-                for (let ang of angles) {
-                    const rad = ang * (Math.PI / 180);
-                    const dx = Math.cos(rad) * r;
-                    const dy = Math.sin(rad) * r;
-                    
-                    const boxX = (dx > 0) ? dx : (dx - boxW);
-                    const boxY = (dy > 0) ? dy : (dy - boxH);
-                    
-                    const absBoxX = pt.cx + boxX;
-                    const absBoxY = pt.cy + boxY;
-                    const anchorX = pt.cx + dx;
-                    const anchorY = pt.cy + dy;
+            for (let strat of strategies) {
+                const r = strat.dist;
+                const ang = strat.angle;
+                const rad = ang * (Math.PI / 180);
+                const dx = Math.cos(rad) * r;
+                const dy = Math.sin(rad) * r;
+                
+                const boxX = (dx > 0) ? dx : (dx - boxW);
+                const boxY = (dy > 0) ? dy : (dy - boxH);
+                
+                const absBoxX = pt.cx + boxX;
+                const absBoxY = pt.cy + boxY;
+                const anchorX = pt.cx + dx;
+                const anchorY = pt.cy + dy;
 
-                    const rect = { 
-                        left: absBoxX - padding, 
-                        top: absBoxY - padding, 
-                        right: absBoxX + boxW + padding, 
-                        bottom: absBoxY + boxH + padding,
-                        width: boxW + 2*padding,
-                        height: boxH + 2*padding,
-                        anchorX, anchorY
-                    };
-                    
-                    const distCost = r * 0.1; // Reduced distance penalty
-                    const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                    const totalCost = placementCost + distCost;
-                    
-                    if (totalCost < minCost) {
-                        minCost = totalCost;
-                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
-                    }
-                    if (minCost === 0) break; 
+                const rect = { 
+                    left: absBoxX - padding, 
+                    top: absBoxY - padding, 
+                    right: absBoxX + boxW + padding, 
+                    bottom: absBoxY + boxH + padding,
+                    width: boxW + 2*padding,
+                    height: boxH + 2*padding,
+                    anchorX, anchorY
+                };
+                
+                const distCost = r * 0.1;
+                const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
+                const totalCost = placementCost + distCost;
+                
+                if (totalCost < minCost) {
+                    minCost = totalCost;
+                    bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
                 }
-                if (minCost < 5) break; 
+                if (minCost === 0) break; 
             }
             
             if (!bestCandidate) { 
