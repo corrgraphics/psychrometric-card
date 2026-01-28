@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.6 - Cleaned Grid & Trend Guidelines
+ * Version 0.8.7 - Strict Bounds Enforcement
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.6 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.7 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -313,7 +313,8 @@ class PsychrometricCard extends HTMLElement {
         const todayDOY = this.getDayOfYear(new Date());
         const trailSig = this.trailPoints ? this.trailPoints.length : 0;
         const trendSig = this.enthalpyHistory ? this.enthalpyHistory.length : 0;
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric;
+        const loadingSig = this.historyLoading;
+        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -352,6 +353,8 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
+        this.drawChart(); 
+        
         const hours = Math.max(
             this._config.enable_trails ? this._config.trail_hours : 0, 
             this._config.enthalpy_trend_hours || 0
@@ -359,6 +362,7 @@ class PsychrometricCard extends HTMLElement {
         
         if (hours <= 0) {
             this.historyLoading = false;
+            this.drawChart();
             return;
         }
 
@@ -376,11 +380,11 @@ class PsychrometricCard extends HTMLElement {
             const historyData = await this._hass.callApi('GET', `history/period/${isoStart}?filter_entity_id=${Array.from(entityIds).join(',')}&minimal_response`);
             this.processHistory(historyData);
             this.lastHistoryFetch = Date.now();
-            this.drawChart();
         } catch(e) {
             console.error("Psychrometric Card: History fetch failed", e);
         } finally {
             this.historyLoading = false;
+            this.drawChart();
         }
     }
 
@@ -806,7 +810,7 @@ class PsychrometricCard extends HTMLElement {
             }
         }
 
-        // Grid (RH Curves)
+        // Grid
         [20, 40, 60, 80, 100].forEach(rh => {
             const pts = [];
             for (let t = tempRange[0]; t <= tempRange[1]; t += 1) {
@@ -877,11 +881,6 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
         
-        // --- LOADING INDICATOR ---
-        if (this.historyLoading) {
-            svgContent += `<text x="20" y="40" font-size="12" fill="${textColor}" class="loading-text">Loading history data...</text>`;
-        }
-
         // Enthalpy Trend
         if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
             const tW = 500; const tH = 300; const tX = 10; const tY = 10;
@@ -927,6 +926,12 @@ class PsychrometricCard extends HTMLElement {
                 seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
             });
             trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
+            
+            // --- LOADING INDICATOR (On Top of Trend Graph) ---
+            if (this.historyLoading) {
+                 trendLines += `<text x="${tW/2}" y="${tH/2}" font-size="12" fill="${textColor}" text-anchor="middle" class="loading-text">Loading history data...</text>`;
+            }
+            
             trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
 
@@ -982,11 +987,11 @@ class PsychrometricCard extends HTMLElement {
 
         const calculateCost = (rect, pOrigin) => {
             let cost = 0;
-            // Bounds check
-            if (rect.left < 0) cost += 10000;
-            if (rect.right > innerWidth) cost += 10000;
-            if (rect.top < 0) cost += 10000;
-            if (rect.bottom > innerHeight) cost += 10000;
+            // Bounds check - Penalize heavily for going outside chart area
+            if (rect.left < 0) cost += 1000000;
+            if (rect.right > innerWidth) cost += 1000000;
+            if (rect.top < 0) cost += 1000000;
+            if (rect.bottom > innerHeight) cost += 2000000; // Extra penalty for bottom to protect legend
 
             for (let other of occupied) {
                 const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
@@ -1000,7 +1005,7 @@ class PsychrometricCard extends HTMLElement {
                 // Line intersection check
                 if (other.type === 'label') {
                      if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 5000;
+                         cost += 50000;
                      }
                 }
             }
