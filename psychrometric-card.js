@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.9.1 - Enhanced Loading Indicator & Fixes
+ * Version 0.9.2 - Fixed Loading Animation & Restored Centroid Fanning
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.9.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.9.2 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -44,6 +44,7 @@ const ColorUtils = {
 const PsychroMath = {
     F_TO_R: 459.67,
 
+    // Unit Conversions
     CtoF: (c) => c * 1.8 + 32,
     FtoC: (f) => (f - 32) / 1.8,
     kPaToPsi: (kpa) => kpa * 0.145038,
@@ -352,7 +353,7 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
-        this.drawChart(); // Redraw immediately to show loader
+        this.drawChart(); 
         
         const hours = Math.max(
             this._config.enable_trails ? this._config.trail_hours : 0, 
@@ -562,6 +563,7 @@ class PsychrometricCard extends HTMLElement {
             .spinner {
                 animation: spin 1s linear infinite;
                 transform-origin: center;
+                transform-box: fill-box;
             }
         `;
 
@@ -887,7 +889,6 @@ class PsychrometricCard extends HTMLElement {
             const tH = this._config.enthalpy_trend_hours > 0 ? 300 : 100;
             const tX = 10; const tY = 10;
             
-            // Draw a semi-transparent box with spinner and text
             loaderSvg += `
                 <g transform="translate(${tX}, ${tY})">
                     <rect x="0" y="0" width="${tW}" height="${tH}" fill="transparent" />
@@ -916,7 +917,6 @@ class PsychrometricCard extends HTMLElement {
                     });
                 });
                 
-                // Adjust bounds to nice ticks
                 let hRange = maxH - minH;
                 let step = 5;
                 if (hRange < 10) step = 1;
@@ -943,7 +943,6 @@ class PsychrometricCard extends HTMLElement {
                 const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
                 trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
                 
-                // Grid Lines & Labels
                 let gridLines = '';
                 let gridLabels = '';
                 for (let val = minH; val <= maxH; val += step) {
@@ -983,26 +982,57 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<g class="trails">${trailsSvg}</g>`;
         svgContent += `<g class="trend">${trendSvg}</g>`; 
 
-        // --- LAYER 4: POINTS & LABELS ---
+        // --- LAYER 4: POINTS & LABELS WITH CENTROID FANNING ---
+        
+        // 1. Calculate Coordinates and Centroid
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
-            return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
+            return {
+                ...pt,
+                cx: xScale(pt.db),
+                cy: yScale(pt.w)
+            };
         }).filter(p => p !== null);
-        chartPoints.sort((a, b) => b.cy - a.cy);
+
+        // Center of mass for cluster fanning
+        let cxSum = 0, cySum = 0;
+        chartPoints.forEach(pt => { cxSum += pt.cx; cySum += pt.cy; });
+        const center = chartPoints.length > 0 
+             ? { x: cxSum / chartPoints.length, y: cySum / chartPoints.length } 
+             : { x: innerWidth/2, y: innerHeight/2 };
+
+        // Sort by distance from center (inner points first to claim close labels)
+        chartPoints.sort((a, b) => {
+             const distA = Math.hypot(a.cx - center.x, a.cy - center.y);
+             const distB = Math.hypot(b.cx - center.x, b.cy - center.y);
+             return distA - distB;
+        });
         
         const occupied = []; const boxW = 170; const boxH = 65; 
-        const padding = 15; 
+        const padding = 20; 
         
-        // Add markers to occupied zones with type
+        // Add points to occupied space
         chartPoints.forEach(p => { 
-            occupied.push({ 
-                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
-                type: 'point',
-                center: { x: p.cx, y: p.cy }
-            }); 
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
         });
+        
+        // Add Weather Legend area as obstacle
+        if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
+            const legendW = 100; const legendH = 40; 
+            const legendX = innerWidth - legendW - 10;
+            const legendY = innerHeight - 40;
+            occupied.push({ left: legendX - 10, top: legendY - 10, right: legendX + legendW + 10, bottom: legendY + legendH + 10, type: 'label' });
+        }
 
-        // Intersection Helper
+        const isOverlapping = (rect) => {
+            // Strict Bounds
+            if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
+            for (let other of occupied) {
+                if (!(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom)) return true;
+            }
+            return false;
+        };
+
         const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
             const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
                 const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
@@ -1018,81 +1048,64 @@ class PsychrometricCard extends HTMLElement {
             return false;
         };
 
-        const calculateCost = (rect, pOrigin) => {
-            let cost = 0;
-            // Bounds check - Penalize heavily for going outside chart area
-            if (rect.left < 0) cost += 10000;
-            if (rect.right > innerWidth) cost += 10000;
-            if (rect.top < 0) cost += 10000;
-            if (rect.bottom > innerHeight) cost += 5000000; 
-
-            for (let other of occupied) {
-                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                if (x_overlap > 0 && y_overlap > 0) {
-                    const area = x_overlap * y_overlap;
-                    if (other.type === 'point') cost += area * 100; 
-                    else if (other.type === 'static') cost += area * 500; // Static obstacle penalty
-                    else cost += area * 50; 
-                }
-                
-                // Line intersection check
-                if (other.type === 'label' || other.type === 'static') {
-                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 5000;
-                     }
-                }
-            }
-            return cost;
-        };
-
         chartPoints.forEach(pt => {
-            const strategies = [
-                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
-                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
-                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 },
-                { dist: 120, angle: -45 }, { dist: 120, angle: 45 }, { dist: 160, angle: -45 }
-            ];
+            // Vector from center (escape vector)
+            let vx = pt.cx - center.x;
+            let vy = pt.cy - center.y;
+            if (Math.abs(vx) < 0.1 && Math.abs(vy) < 0.1) { vx = 1; vy = -1; } // Default if exact center
+            
+            const preferredAngle = Math.atan2(vy, vx) * (180 / Math.PI);
+            
+            // Generate strategies radiating from preferred angle
+            // Prioritize: 40px away at perfect angle, then small angle deviations, then larger distances
+            const radii = [40, 70, 110, 150];
+            const angleOffsets = [0, 20, -20, 45, -45, 90, -90, 135, -135, 180];
+            
             let bestCandidate = null;
-            let minCost = Infinity;
 
-            for (let strat of strategies) {
-                const r = strat.dist;
-                const ang = strat.angle;
-                const rad = ang * (Math.PI / 180);
-                const dx = Math.cos(rad) * r;
-                const dy = Math.sin(rad) * r;
-                
-                const boxX = (dx > 0) ? dx : (dx - boxW);
-                const boxY = (dy > 0) ? dy : (dy - boxH);
-                
-                const absBoxX = pt.cx + boxX;
-                const absBoxY = pt.cy + boxY;
-                const anchorX = pt.cx + dx;
-                const anchorY = pt.cy + dy;
+            // Search logic: Find First Valid Non-Overlapping Spot
+            searchLoop:
+            for (let r of radii) {
+                for (let offset of angleOffsets) {
+                    const ang = preferredAngle + offset;
+                    const rad = ang * (Math.PI / 180);
+                    const dx = Math.cos(rad) * r;
+                    const dy = Math.sin(rad) * r;
+                    
+                    const boxX = (dx > 0) ? dx : (dx - boxW);
+                    const boxY = (dy > 0) ? dy : (dy - boxH);
+                    
+                    const absBoxX = pt.cx + boxX;
+                    const absBoxY = pt.cy + boxY;
+                    const anchorX = pt.cx + dx;
+                    const anchorY = pt.cy + dy;
 
-                const rect = { 
-                    left: absBoxX - padding, 
-                    top: absBoxY - padding, 
-                    right: absBoxX + boxW + padding, 
-                    bottom: absBoxY + boxH + padding,
-                    width: boxW + 2*padding,
-                    height: boxH + 2*padding,
-                    anchorX, anchorY
-                };
-                
-                const distCost = r * 0.1;
-                const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                const totalCost = placementCost + distCost;
-                
-                if (totalCost < minCost) {
-                    minCost = totalCost;
-                    bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                    const rect = { 
+                        left: absBoxX - padding, top: absBoxY - padding, 
+                        right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
+                        type: 'label',
+                        anchorX, anchorY
+                    };
+                    
+                    // Check direct overlap with bounds/boxes
+                    if (!isOverlapping(rect)) {
+                        // Check line crossing existing labels
+                        let lineCross = false;
+                        for (let other of occupied) {
+                            if (other.type === 'label' && lineIntersectsRect(pt.cx, pt.cy, anchorX, anchorY, other)) {
+                                lineCross = true; break;
+                            }
+                        }
+                        if (!lineCross) {
+                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                            break searchLoop; // Found a spot!
+                        }
+                    }
                 }
-                if (minCost === 0) break; 
             }
             
-            if (!bestCandidate) { 
+            // Fallback
+            if (!bestCandidate) {
                  const dx = 40; const dy = -40; 
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
             }
@@ -1102,7 +1115,8 @@ class PsychrometricCard extends HTMLElement {
                 top: pt.cy + bestCandidate.boxY, 
                 right: pt.cx + bestCandidate.boxX + boxW, 
                 bottom: pt.cy + bestCandidate.boxY + boxH,
-                type: 'label' 
+                type: 'label',
+                anchorX: bestCandidate.anchorX, anchorY: bestCandidate.anchorY
             });
             
             const lineX2 = bestCandidate.anchorX; 
