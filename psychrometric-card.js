@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.8 - Enhanced Spacing & Trend Grid
+ * Version 0.8.9 - Reverted Collision Logic (Soft Constraints)
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.8 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.9 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -972,7 +972,7 @@ class PsychrometricCard extends HTMLElement {
         chartPoints.sort((a, b) => a.cy - b.cy);
         
         const occupied = []; const boxW = 170; const boxH = 65; 
-        const padding = 30; // Increased padding for better separation
+        const padding = 15; // Reverted to 15 (v0.8.5)
         
         // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
@@ -1002,10 +1002,11 @@ class PsychrometricCard extends HTMLElement {
         const calculateCost = (rect, pOrigin) => {
             let cost = 0;
             // Bounds check - Penalize heavily for going outside chart area
-            if (rect.left < 0) cost += 1000000;
-            if (rect.right > innerWidth) cost += 1000000;
-            if (rect.top < 0) cost += 1000000;
-            if (rect.bottom > innerHeight) cost += 2000000; // Extra penalty for bottom to protect legend
+            // v0.8.5 values: 10,000 for normal, +extra for bottom
+            if (rect.left < 0) cost += 10000;
+            if (rect.right > innerWidth) cost += 10000;
+            if (rect.top < 0) cost += 10000;
+            if (rect.bottom > innerHeight) cost += 20000; // Prefer not to hit legend
 
             for (let other of occupied) {
                 const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
@@ -1019,7 +1020,7 @@ class PsychrometricCard extends HTMLElement {
                 // Line intersection check
                 if (other.type === 'label') {
                      if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 50000;
+                         cost += 5000;
                      }
                 }
             }
