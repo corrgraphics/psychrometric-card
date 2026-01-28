@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.9.0 - Centroid Explode Positioning
+ * Version 0.9.1 - Enhanced Loading Indicator & Fixes
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.9.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.9.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -352,7 +352,7 @@ class PsychrometricCard extends HTMLElement {
 
     async fetchHistory() {
         this.historyLoading = true;
-        this.drawChart(); 
+        this.drawChart(); // Redraw immediately to show loader
         
         const hours = Math.max(
             this._config.enable_trails ? this._config.trail_hours : 0, 
@@ -556,12 +556,12 @@ class PsychrometricCard extends HTMLElement {
             .label-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
 
             /* Loading Animation */
-            @keyframes pulse {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.5; }
+            @keyframes spin {
+                100% { transform: rotate(360deg); }
             }
-            .loading-text {
-                animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            .spinner {
+                animation: spin 1s linear infinite;
+                transform-origin: center;
             }
         `;
 
@@ -729,6 +729,7 @@ class PsychrometricCard extends HTMLElement {
         let trailsSvg = '';
         let trendSvg = '';
         let gridLinesSvg = ''; 
+        let loaderSvg = '';
         
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
@@ -825,7 +826,7 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Axes & Basic Grid (Now Clipped for supersaturation)
+        // Axes
         const xTicks = [];
         for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
         
@@ -880,72 +881,91 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
         
+        // --- LOADING INDICATOR ---
+        if (this.historyLoading) {
+            const tW = this._config.enthalpy_trend_hours > 0 ? 500 : 200;
+            const tH = this._config.enthalpy_trend_hours > 0 ? 300 : 100;
+            const tX = 10; const tY = 10;
+            
+            // Draw a semi-transparent box with spinner and text
+            loaderSvg += `
+                <g transform="translate(${tX}, ${tY})">
+                    <rect x="0" y="0" width="${tW}" height="${tH}" fill="transparent" />
+                    <g transform="translate(${tW/2 - 50}, ${tH/2 - 15})">
+                         <rect x="0" y="0" width="120" height="30" rx="15" fill="${this._config.style.label_background}" stroke="${cStyle.axis}" stroke-width="1" />
+                         <circle cx="20" cy="15" r="6" fill="none" stroke="${textColor}" stroke-width="2" stroke-dasharray="10 6" class="spinner" />
+                         <text x="35" y="19" font-size="10" fill="${textColor}" font-weight="bold">Loading...</text>
+                    </g>
+                </g>
+            `;
+        }
+        
         // Enthalpy Trend
-        if (this.enthalpyHistory.length > 0 && this._config.enthalpy_trend_hours > 0) {
+        if (this._config.enthalpy_trend_hours > 0) {
             const tW = 500; const tH = 300; const tX = 10; const tY = 10;
             let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
-            this.enthalpyHistory.forEach(series => {
-                series.data.forEach(d => {
-                    if (d.value < minH) minH = d.value;
-                    if (d.value > maxH) maxH = d.value;
-                    const t = d.time.getTime();
-                    if (t < minTime) minTime = t;
-                    if (t > maxTime) maxTime = t;
+            
+            if (this.enthalpyHistory.length > 0) {
+                this.enthalpyHistory.forEach(series => {
+                    series.data.forEach(d => {
+                        if (d.value < minH) minH = d.value;
+                        if (d.value > maxH) maxH = d.value;
+                        const t = d.time.getTime();
+                        if (t < minTime) minTime = t;
+                        if (t > maxTime) maxTime = t;
+                    });
                 });
-            });
-            
-            // Adjust bounds to nice ticks
-            let hRange = maxH - minH;
-            let step = 5;
-            if (hRange < 10) step = 1;
-            else if (hRange < 30) step = 5;
-            else step = 10;
-            
-            minH = Math.floor(minH / step) * step;
-            maxH = Math.ceil(maxH / step) * step;
-            if (minH === maxH) { minH -= step; maxH += step; }
+                
+                // Adjust bounds to nice ticks
+                let hRange = maxH - minH;
+                let step = 5;
+                if (hRange < 10) step = 1;
+                else if (hRange < 30) step = 5;
+                else step = 10;
+                
+                minH = Math.floor(minH / step) * step;
+                maxH = Math.ceil(maxH / step) * step;
+                if (minH === maxH) { minH -= step; maxH += step; }
 
-            const titleOffset = 25; 
-            const graphH = tH - titleOffset;
-            const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
-            const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
-            const trendGen = (data) => {
-                if (data.length === 0) return '';
-                const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
-                return d;
-            };
-            const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
-            const gradId = `trend-fade-grad-${maskId}`;
-            svgContent += `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="white" stop-opacity="1"/><stop offset="40%" stop-color="white" stop-opacity="0.9"/><stop offset="80%" stop-color="black" stop-opacity="0"/></linearGradient><mask id="${maskId}"><rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" /></mask></defs>`;
-            let trendLines = '';
-            const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
-            trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
-            
-            // Grid Lines & Labels
-            let gridLines = '';
-            let gridLabels = '';
-            for (let val = minH; val <= maxH; val += step) {
-                 const y = scaleTY(val);
-                 gridLines += `<line x1="0" y1="${y}" x2="${tW}" y2="${y}" stroke="${gridColor}" stroke-dasharray="4,4" stroke-width="0.5" />`;
-                 gridLabels += `<text x="-5" y="${y + 3}" font-size="10" fill="${axisColor}" text-anchor="end">${val.toFixed(0)}</text>`;
-            }
+                const titleOffset = 25; 
+                const graphH = tH - titleOffset;
+                const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
+                const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
+                const trendGen = (data) => {
+                    if (data.length === 0) return '';
+                    const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
+                    return d;
+                };
+                const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
+                const gradId = `trend-fade-grad-${maskId}`;
+                svgContent += `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="white" stop-opacity="1"/><stop offset="40%" stop-color="white" stop-opacity="0.9"/><stop offset="80%" stop-color="black" stop-opacity="0"/></linearGradient><mask id="${maskId}"><rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" /></mask></defs>`;
+                let trendLines = '';
+                const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
+                trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
+                
+                // Grid Lines & Labels
+                let gridLines = '';
+                let gridLabels = '';
+                for (let val = minH; val <= maxH; val += step) {
+                     const y = scaleTY(val);
+                     gridLines += `<line x1="0" y1="${y}" x2="${tW}" y2="${y}" stroke="${gridColor}" stroke-dasharray="4,4" stroke-width="0.5" />`;
+                     gridLabels += `<text x="-5" y="${y + 3}" font-size="10" fill="${axisColor}" text-anchor="end">${val.toFixed(0)}</text>`;
+                }
 
-            let seriesPaths = '';
-            this.enthalpyHistory.forEach(series => {
-                seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
-            });
-            
-            trendLines += `<g mask="url(#${maskId})">${gridLines}</g>`;
-            trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
-            trendLines += gridLabels;
-            
-            // --- LOADING INDICATOR (On Top of Trend Graph) ---
-            if (this.historyLoading) {
-                 trendLines += `<text x="${tW/2}" y="${tH/2}" font-size="12" fill="${textColor}" text-anchor="middle" class="loading-text">Loading history data...</text>`;
+                let seriesPaths = '';
+                this.enthalpyHistory.forEach(series => {
+                    seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
+                });
+                
+                trendLines += `<g mask="url(#${maskId})">${gridLines}</g>`;
+                trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
+                trendLines += gridLabels;
+                
+                trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
             }
-            
-            trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
+        
+        svgContent += `<g class="loader">${loaderSvg}</g>`;
 
         // Trails
         this.trailPoints.forEach(trail => {
@@ -968,6 +988,7 @@ class PsychrometricCard extends HTMLElement {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
             return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
+        chartPoints.sort((a, b) => b.cy - a.cy);
         
         const occupied = []; const boxW = 170; const boxH = 65; 
         const padding = 15; 
@@ -980,18 +1001,6 @@ class PsychrometricCard extends HTMLElement {
                 center: { x: p.cx, y: p.cy }
             }); 
         });
-        
-        // Add Weather Legend as Static Obstacle if present
-        if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
-            const legendW = 100; const legendH = 30; // Includes text height approx
-            const legendX = innerWidth - legendW - 10;
-            const legendY = innerHeight - 40;
-            occupied.push({
-                left: legendX - 5, top: legendY - 15,
-                right: legendX + legendW + 5, bottom: legendY + legendH + 5,
-                type: 'static'
-            });
-        }
 
         // Intersection Helper
         const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
@@ -1006,14 +1015,6 @@ class PsychrometricCard extends HTMLElement {
             if (intersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.right, rect.bottom)) return true;
             if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.left, rect.bottom)) return true;
             if (intersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom)) return true;
-            return false;
-        };
-
-        const isOutOfBounds = (rect) => {
-            if (rect.left < 0) return true;
-            if (rect.right > innerWidth) return true;
-            if (rect.top < 0) return true;
-            if (rect.bottom > innerHeight) return true; // Strict bottom limit
             return false;
         };
 
@@ -1045,124 +1046,52 @@ class PsychrometricCard extends HTMLElement {
             return cost;
         };
 
-        // --- NEW: CENTROID CALCULATION ---
-        let cxSum = 0, cySum = 0;
         chartPoints.forEach(pt => {
-            cxSum += pt.cx;
-            cySum += pt.cy;
-        });
-        const center = {
-             x: cxSum / chartPoints.length,
-             y: cySum / chartPoints.length
-        };
-
-        // Sort by distance from center (inner points first)
-        chartPoints.sort((a, b) => {
-             const distA = Math.hypot(a.cx - center.x, a.cy - center.y);
-             const distB = Math.hypot(b.cx - center.x, b.cy - center.y);
-             return distA - distB;
-        });
-
-        chartPoints.forEach(pt => {
-            // Calculate vector from center
-            let vx = pt.cx - center.x;
-            let vy = pt.cy - center.y;
-            // If perfectly center, default to up-right
-            if (Math.abs(vx) < 1 && Math.abs(vy) < 1) { vx = 1; vy = -1; }
-            
-            // Preferred angle in degrees (0 = East, -90 = North)
-            const preferredAngle = Math.atan2(vy, vx) * (180 / Math.PI);
-
-            // Generate strategies by sweeping around preferred angle
-            // +/- 15, +/- 30, etc.
-            const angleOffsets = [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180];
-            const radii = [40, 70, 100, 140, 180];
-            
+            const strategies = [
+                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
+                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
+                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 },
+                { dist: 120, angle: -45 }, { dist: 120, angle: 45 }, { dist: 160, angle: -45 }
+            ];
             let bestCandidate = null;
             let minCost = Infinity;
 
-            // First Pass: Find strict valid spot
-            for (let r of radii) {
-                for (let offset of angleOffsets) {
-                    const ang = preferredAngle + offset;
-                    const rad = ang * (Math.PI / 180);
-                    const dx = Math.cos(rad) * r;
-                    const dy = Math.sin(rad) * r;
-                    
-                    const boxX = (dx > 0) ? dx : (dx - boxW);
-                    const boxY = (dy > 0) ? dy : (dy - boxH);
-                    
-                    const absBoxX = pt.cx + boxX;
-                    const absBoxY = pt.cy + boxY;
-                    const anchorX = pt.cx + dx;
-                    const anchorY = pt.cy + dy;
+            for (let strat of strategies) {
+                const r = strat.dist;
+                const ang = strat.angle;
+                const rad = ang * (Math.PI / 180);
+                const dx = Math.cos(rad) * r;
+                const dy = Math.sin(rad) * r;
+                
+                const boxX = (dx > 0) ? dx : (dx - boxW);
+                const boxY = (dy > 0) ? dy : (dy - boxH);
+                
+                const absBoxX = pt.cx + boxX;
+                const absBoxY = pt.cy + boxY;
+                const anchorX = pt.cx + dx;
+                const anchorY = pt.cy + dy;
 
-                    const rect = { 
-                        left: absBoxX - padding, top: absBoxY - padding, 
-                        right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
-                        width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
-                    };
-                    
-                    // Strict check first
-                    if (!isOutOfBounds(rect)) {
-                        let overlapping = false;
-                        for (let other of occupied) {
-                            const x_ov = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                            const y_ov = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                            if (x_ov > 0 && y_ov > 0) { overlapping = true; break; }
-                            if ((other.type === 'label' || other.type === 'static') && lineIntersectsRect(pt.cx, pt.cy, anchorX, anchorY, other)) {
-                                overlapping = true; break;
-                            }
-                        }
-                        if (!overlapping) {
-                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
-                            minCost = 0; // Found perfect spot
-                            break; 
-                        }
-                    }
+                const rect = { 
+                    left: absBoxX - padding, 
+                    top: absBoxY - padding, 
+                    right: absBoxX + boxW + padding, 
+                    bottom: absBoxY + boxH + padding,
+                    width: boxW + 2*padding,
+                    height: boxH + 2*padding,
+                    anchorX, anchorY
+                };
+                
+                const distCost = r * 0.1;
+                const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
+                const totalCost = placementCost + distCost;
+                
+                if (totalCost < minCost) {
+                    minCost = totalCost;
+                    bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
                 }
-                if (minCost === 0) break;
-            }
-
-            // Fallback: If no strict valid spot found, try cost function (might pick slight overlap)
-            if (!bestCandidate) {
-                for (let r of radii) {
-                    for (let offset of angleOffsets) {
-                        const ang = preferredAngle + offset;
-                        const rad = ang * (Math.PI / 180);
-                        const dx = Math.cos(rad) * r;
-                        const dy = Math.sin(rad) * r;
-                        
-                        const boxX = (dx > 0) ? dx : (dx - boxW);
-                        const boxY = (dy > 0) ? dy : (dy - boxH);
-                        
-                        const absBoxX = pt.cx + boxX;
-                        const absBoxY = pt.cy + boxY;
-                        const anchorX = pt.cx + dx;
-                        const anchorY = pt.cy + dy;
-
-                        const rect = { 
-                            left: absBoxX - padding, top: absBoxY - padding, 
-                            right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
-                            width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
-                        };
-                        
-                        const distCost = r * 0.1;
-                        // Add penalty for deviation from preferred angle
-                        const angleCost = Math.abs(offset) * 0.5;
-
-                        const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                        const totalCost = placementCost + distCost + angleCost;
-                        
-                        if (totalCost < minCost) {
-                            minCost = totalCost;
-                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
-                        }
-                    }
-                }
+                if (minCost === 0) break; 
             }
             
-            // Absolute fallback
             if (!bestCandidate) { 
                  const dx = 40; const dy = -40; 
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
