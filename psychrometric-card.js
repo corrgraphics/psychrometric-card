@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.7 - Strict Bounds Enforcement
+ * Version 0.8.8 - Enhanced Spacing & Trend Grid
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.7 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.8 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -894,7 +894,18 @@ class PsychrometricCard extends HTMLElement {
                     if (t > maxTime) maxTime = t;
                 });
             });
-            minH -= 1; maxH += 1;
+            
+            // Adjust bounds to nice ticks
+            let hRange = maxH - minH;
+            let step = 5;
+            if (hRange < 10) step = 1;
+            else if (hRange < 30) step = 5;
+            else step = 10;
+            
+            minH = Math.floor(minH / step) * step;
+            maxH = Math.ceil(maxH / step) * step;
+            if (minH === maxH) { minH -= step; maxH += step; }
+
             const titleOffset = 25; 
             const graphH = tH - titleOffset;
             const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
@@ -910,22 +921,24 @@ class PsychrometricCard extends HTMLElement {
             let trendLines = '';
             const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
             trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
-            trendLines += `<text x="-5" y="${titleOffset + 8}" font-size="10" fill="${axisColor}" text-anchor="end">${maxH.toFixed(0)}</text>`;
-            trendLines += `<text x="-5" y="${tH}" font-size="10" fill="${axisColor}" text-anchor="end">${minH.toFixed(0)}</text>`;
-
-            // Draw Trend Guidelines (Dashed)
-            const hRange = maxH - minH;
-            const step = hRange <= 10 ? 2 : 5; // dynamic step
-            for (let h = Math.ceil(minH / step) * step; h < maxH; h += step) {
-                const y = scaleTY(h);
-                trendLines += `<line x1="0" y1="${y}" x2="${tW}" y2="${y}" stroke="${gridColor}" stroke-dasharray="4,4" stroke-width="0.5" />`;
+            
+            // Grid Lines & Labels
+            let gridLines = '';
+            let gridLabels = '';
+            for (let val = minH; val <= maxH; val += step) {
+                 const y = scaleTY(val);
+                 gridLines += `<line x1="0" y1="${y}" x2="${tW}" y2="${y}" stroke="${gridColor}" stroke-dasharray="4,4" stroke-width="0.5" />`;
+                 gridLabels += `<text x="-5" y="${y + 3}" font-size="10" fill="${axisColor}" text-anchor="end">${val.toFixed(0)}</text>`;
             }
 
             let seriesPaths = '';
             this.enthalpyHistory.forEach(series => {
                 seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
             });
+            
+            trendLines += `<g mask="url(#${maskId})">${gridLines}</g>`;
             trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
+            trendLines += gridLabels;
             
             // --- LOADING INDICATOR (On Top of Trend Graph) ---
             if (this.historyLoading) {
@@ -958,7 +971,8 @@ class PsychrometricCard extends HTMLElement {
         }).filter(p => p !== null);
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        const occupied = []; const boxW = 170; const boxH = 65; const padding = 15; 
+        const occupied = []; const boxW = 170; const boxH = 65; 
+        const padding = 30; // Increased padding for better separation
         
         // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
