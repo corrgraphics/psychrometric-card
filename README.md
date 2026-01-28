@@ -7,7 +7,8 @@ A native, lightweight Lovelace card that renders a live **Psychrometric Chart** 
 
 This card visualizes the state of air in your home against the **ASHRAE 55 Comfort Zone**. It features unlimited custom state points, color customization, and an innovative **Seasonal Weather Heatmap** layer driven by EPW climate files.
 
-<img width="1284" height="843" alt="image" src="https://github.com/user-attachments/assets/7cc1fcd5-20fa-4feb-8b5c-8b691e8c22ef" />
+<img width="1318" height="794" alt="image" src="https://github.com/user-attachments/assets/97e831d4-a4c7-4c2e-995e-0d02c4fa2ada" />
+
 
 ## Features
 
@@ -147,8 +148,6 @@ To visualize historical weather data:
 3.  Reference it in the config via `/local/filename.epw`.
 
 The card parses this file and bins the hourly data into a frequency heatmap rendered behind the chart lines.
-
-<img width="1289" height="777" alt="image" src="https://github.com/user-attachments/assets/52dc8435-cb33-4fd0-8d04-52d49de4345f" />
 
 ## Credits
 
