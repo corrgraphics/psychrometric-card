@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.9.3 - Cost-Based Centroid Fanning (Fix Overlaps)
+ * Version 0.9.4 - Bouncing Loader & Bigger Trails
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.9.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.9.4 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -556,15 +556,17 @@ class PsychrometricCard extends HTMLElement {
             .label-row { white-space: nowrap; }
             .label-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
 
-            /* Loading Animation */
-            @keyframes spin {
-                100% { transform: rotate(360deg); }
+            /* Bouncing Dot Animation */
+            @keyframes bounce {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-4px); }
             }
-            .spinner {
-                animation: spin 1s linear infinite;
-                transform-origin: center;
-                transform-box: fill-box;
+            .loading-dot {
+                animation: bounce 1.4s infinite ease-in-out;
+                display: inline-block;
             }
+            .loading-dot:nth-child(1) { animation-delay: -0.32s; }
+            .loading-dot:nth-child(2) { animation-delay: -0.16s; }
         `;
 
         this.shadowRoot.appendChild(style);
@@ -731,7 +733,6 @@ class PsychrometricCard extends HTMLElement {
         let trailsSvg = '';
         let trendSvg = '';
         let gridLinesSvg = ''; 
-        let loaderSvg = '';
         
         const cStyle = this._config.style;
         const textColor = "var(--primary-text-color)";
@@ -883,30 +884,26 @@ class PsychrometricCard extends HTMLElement {
             `;
         }
         
-        // --- LOADING INDICATOR ---
-        if (this.historyLoading) {
-            const tW = this._config.enthalpy_trend_hours > 0 ? 500 : 200;
-            const tH = this._config.enthalpy_trend_hours > 0 ? 300 : 100;
-            const tX = 10; const tY = 10;
-            
-            loaderSvg += `
-                <g transform="translate(${tX}, ${tY})">
-                    <rect x="0" y="0" width="${tW}" height="${tH}" fill="transparent" />
-                    <g transform="translate(${tW/2 - 50}, ${tH/2 - 15})">
-                         <rect x="0" y="0" width="120" height="30" rx="15" fill="${this._config.style.label_background}" stroke="${cStyle.axis}" stroke-width="1" />
-                         <circle cx="20" cy="15" r="6" fill="none" stroke="${textColor}" stroke-width="2" stroke-dasharray="10 6" class="spinner" />
-                         <text x="35" y="19" font-size="10" fill="${textColor}" font-weight="bold">Loading...</text>
-                    </g>
-                </g>
-            `;
-        }
-        
         // Enthalpy Trend
         if (this._config.enthalpy_trend_hours > 0) {
             const tW = 500; const tH = 300; const tX = 10; const tY = 10;
-            let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
+            const titleOffset = 25; 
             
+            // Logic for Header: Loading vs Title
+            let headerText = '';
+            const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
+            
+            if (this.historyLoading) {
+                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Loading<tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan></text>`;
+            } else {
+                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
+            }
+            
+            let trendLines = headerText;
+
+            // Render graph only if data exists
             if (this.enthalpyHistory.length > 0) {
+                let minH = Infinity, maxH = -Infinity, minTime = Infinity, maxTime = -Infinity;
                 this.enthalpyHistory.forEach(series => {
                     series.data.forEach(d => {
                         if (d.value < minH) minH = d.value;
@@ -927,7 +924,6 @@ class PsychrometricCard extends HTMLElement {
                 maxH = Math.ceil(maxH / step) * step;
                 if (minH === maxH) { minH -= step; maxH += step; }
 
-                const titleOffset = 25; 
                 const graphH = tH - titleOffset;
                 const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
                 const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
@@ -936,13 +932,12 @@ class PsychrometricCard extends HTMLElement {
                     const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
                     return d;
                 };
+                
                 const maskId = `trend-mask-${Math.random().toString(36).substr(2, 9)}`;
                 const gradId = `trend-fade-grad-${maskId}`;
                 svgContent += `<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="white" stop-opacity="1"/><stop offset="40%" stop-color="white" stop-opacity="0.9"/><stop offset="80%" stop-color="black" stop-opacity="0"/></linearGradient><mask id="${maskId}"><rect x="0" y="0" width="${tW}" height="${tH}" fill="url(#${gradId})" /></mask></defs>`;
-                let trendLines = '';
-                const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
-                trendLines += `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
-                
+
+                // Grid Lines & Labels
                 let gridLines = '';
                 let gridLabels = '';
                 for (let val = minH; val <= maxH; val += step) {
@@ -959,12 +954,10 @@ class PsychrometricCard extends HTMLElement {
                 trendLines += `<g mask="url(#${maskId})">${gridLines}</g>`;
                 trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
                 trendLines += gridLabels;
-                
-                trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
             }
+            
+            trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
         }
-        
-        svgContent += `<g class="loader">${loaderSvg}</g>`;
 
         // Trails
         this.trailPoints.forEach(trail => {
@@ -974,7 +967,7 @@ class PsychrometricCard extends HTMLElement {
                 const cy = yScale(pt.w);
                 const opacity = (1 - pt.age) * 0.5;
                 if (opacity > 0.05) {
-                    trailsSvg += `<circle cx="${cx}" cy="${cy}" r="2" fill="${trail.color}" stroke="none" opacity="${opacity}" />`;
+                    trailsSvg += `<circle cx="${cx}" cy="${cy}" r="3.5" fill="${trail.color}" stroke="none" opacity="${opacity}" />`;
                 }
             });
         });
@@ -982,7 +975,7 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<g class="trails">${trailsSvg}</g>`;
         svgContent += `<g class="trend">${trendSvg}</g>`; 
 
-        // --- LAYER 4: POINTS & LABELS WITH COST-BASED CENTROID FANNING ---
+        // --- LAYER 4: POINTS & LABELS WITH CENTROID FANNING ---
         
         // 1. Calculate Coordinates and Centroid
         const chartPoints = this.points.map(pt => {
@@ -1008,10 +1001,8 @@ class PsychrometricCard extends HTMLElement {
              return distA - distB;
         });
         
-        const occupied = []; 
-        const boxW = 170; 
-        const boxH = 65; 
-        const padding = 10; 
+        const occupied = []; const boxW = 170; const boxH = 65; 
+        const padding = 20; 
         
         // Add points to occupied space (small markers)
         chartPoints.forEach(p => { 
@@ -1101,9 +1092,6 @@ class PsychrometricCard extends HTMLElement {
                     const dx = Math.cos(rad) * r;
                     const dy = Math.sin(rad) * r;
                     
-                    // Determine Box Origin based on direction
-                    // If line goes right (dx>0), box is to the right. 
-                    // If line goes left (dx<0), box is to the left (x - boxW).
                     const boxX = (dx > 0) ? dx : (dx - boxW);
                     const boxY = (dy > 0) ? dy : (dy - boxH);
                     
