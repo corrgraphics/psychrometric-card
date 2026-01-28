@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.11 - Hard Boundary Enforcement & Legend Protection
+ * Version 0.9.0 - Centroid Explode Positioning
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.11 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.9.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -44,7 +44,6 @@ const ColorUtils = {
 const PsychroMath = {
     F_TO_R: 459.67,
 
-    // Unit Conversions
     CtoF: (c) => c * 1.8 + 32,
     FtoC: (f) => (f - 32) / 1.8,
     kPaToPsi: (kpa) => kpa * 0.145038,
@@ -970,9 +969,6 @@ class PsychrometricCard extends HTMLElement {
             return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
         
-        // SORT BOTTOM TO TOP to let bottom labels claim space first
-        chartPoints.sort((a, b) => b.cy - a.cy);
-        
         const occupied = []; const boxW = 170; const boxH = 65; 
         const padding = 15; 
         
@@ -1049,61 +1045,53 @@ class PsychrometricCard extends HTMLElement {
             return cost;
         };
 
+        // --- NEW: CENTROID CALCULATION ---
+        let cxSum = 0, cySum = 0;
         chartPoints.forEach(pt => {
-            const strategies = [
-                { dist: 40, angle: -45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 45 }, { dist: 40, angle: 135 },  
-                { dist: 60, angle: -90 }, { dist: 60, angle: 0 }, { dist: 60, angle: 180 },
-                { dist: 80, angle: -45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 45 }, { dist: 80, angle: 135 },
-                { dist: 120, angle: -30 }, { dist: 120, angle: -150 }, { dist: 120, angle: 30 }, { dist: 120, angle: 150 }
-            ];
+            cxSum += pt.cx;
+            cySum += pt.cy;
+        });
+        const center = {
+             x: cxSum / chartPoints.length,
+             y: cySum / chartPoints.length
+        };
+
+        // Sort by distance from center (inner points first)
+        chartPoints.sort((a, b) => {
+             const distA = Math.hypot(a.cx - center.x, a.cy - center.y);
+             const distB = Math.hypot(b.cx - center.x, b.cy - center.y);
+             return distA - distB;
+        });
+
+        chartPoints.forEach(pt => {
+            // Calculate vector from center
+            let vx = pt.cx - center.x;
+            let vy = pt.cy - center.y;
+            // If perfectly center, default to up-right
+            if (Math.abs(vx) < 1 && Math.abs(vy) < 1) { vx = 1; vy = -1; }
+            
+            // Preferred angle in degrees (0 = East, -90 = North)
+            const preferredAngle = Math.atan2(vy, vx) * (180 / Math.PI);
+
+            // Generate strategies by sweeping around preferred angle
+            // +/- 15, +/- 30, etc.
+            const angleOffsets = [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180];
+            const radii = [40, 70, 100, 140, 180];
+            
             let bestCandidate = null;
             let minCost = Infinity;
 
-            // First Pass: Find strict valid spot (No overlap, No OOB)
-            for (let strat of strategies) {
-                const rad = strat.angle * (Math.PI / 180);
-                const dx = Math.cos(rad) * strat.dist;
-                const dy = Math.sin(rad) * strat.dist;
-                
-                const boxX = (dx > 0) ? dx : (dx - boxW);
-                const boxY = (dy > 0) ? dy : (dy - boxH);
-                const absBoxX = pt.cx + boxX;
-                const absBoxY = pt.cy + boxY;
-                const anchorX = pt.cx + dx;
-                const anchorY = pt.cy + dy;
-
-                const rect = { 
-                    left: absBoxX - padding, top: absBoxY - padding, 
-                    right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
-                    width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
-                };
-                
-                // Strict check first
-                if (!isOutOfBounds(rect)) {
-                    let overlapping = false;
-                    for (let other of occupied) {
-                        const x_ov = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                        const y_ov = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                        if (x_ov > 0 && y_ov > 0) { overlapping = true; break; }
-                        if ((other.type === 'label' || other.type === 'static') && lineIntersectsRect(pt.cx, pt.cy, anchorX, anchorY, other)) {
-                            overlapping = true; break;
-                        }
-                    }
-                    if (!overlapping) {
-                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
-                        break; 
-                    }
-                }
-            }
-
-            // Fallback: If no strict valid spot found, use cost function
-            if (!bestCandidate) {
-                for (let strat of strategies) {
-                    const rad = strat.angle * (Math.PI / 180);
-                    const dx = Math.cos(rad) * strat.dist;
-                    const dy = Math.sin(rad) * strat.dist;
+            // First Pass: Find strict valid spot
+            for (let r of radii) {
+                for (let offset of angleOffsets) {
+                    const ang = preferredAngle + offset;
+                    const rad = ang * (Math.PI / 180);
+                    const dx = Math.cos(rad) * r;
+                    const dy = Math.sin(rad) * r;
+                    
                     const boxX = (dx > 0) ? dx : (dx - boxW);
                     const boxY = (dy > 0) ? dy : (dy - boxH);
+                    
                     const absBoxX = pt.cx + boxX;
                     const absBoxY = pt.cy + boxY;
                     const anchorX = pt.cx + dx;
@@ -1115,13 +1103,61 @@ class PsychrometricCard extends HTMLElement {
                         width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
                     };
                     
-                    const distCost = strat.dist * 0.1;
-                    const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                    const totalCost = placementCost + distCost;
-                    
-                    if (totalCost < minCost) {
-                        minCost = totalCost;
-                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                    // Strict check first
+                    if (!isOutOfBounds(rect)) {
+                        let overlapping = false;
+                        for (let other of occupied) {
+                            const x_ov = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                            const y_ov = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                            if (x_ov > 0 && y_ov > 0) { overlapping = true; break; }
+                            if ((other.type === 'label' || other.type === 'static') && lineIntersectsRect(pt.cx, pt.cy, anchorX, anchorY, other)) {
+                                overlapping = true; break;
+                            }
+                        }
+                        if (!overlapping) {
+                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                            minCost = 0; // Found perfect spot
+                            break; 
+                        }
+                    }
+                }
+                if (minCost === 0) break;
+            }
+
+            // Fallback: If no strict valid spot found, try cost function (might pick slight overlap)
+            if (!bestCandidate) {
+                for (let r of radii) {
+                    for (let offset of angleOffsets) {
+                        const ang = preferredAngle + offset;
+                        const rad = ang * (Math.PI / 180);
+                        const dx = Math.cos(rad) * r;
+                        const dy = Math.sin(rad) * r;
+                        
+                        const boxX = (dx > 0) ? dx : (dx - boxW);
+                        const boxY = (dy > 0) ? dy : (dy - boxH);
+                        
+                        const absBoxX = pt.cx + boxX;
+                        const absBoxY = pt.cy + boxY;
+                        const anchorX = pt.cx + dx;
+                        const anchorY = pt.cy + dy;
+
+                        const rect = { 
+                            left: absBoxX - padding, top: absBoxY - padding, 
+                            right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
+                            width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
+                        };
+                        
+                        const distCost = r * 0.1;
+                        // Add penalty for deviation from preferred angle
+                        const angleCost = Math.abs(offset) * 0.5;
+
+                        const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
+                        const totalCost = placementCost + distCost + angleCost;
+                        
+                        if (totalCost < minCost) {
+                            minCost = totalCost;
+                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                        }
                     }
                 }
             }
