@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.10 - Bottom-Up Label Stacking
+ * Version 0.8.11 - Hard Boundary Enforcement & Legend Protection
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.10 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.11 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -984,6 +984,18 @@ class PsychrometricCard extends HTMLElement {
                 center: { x: p.cx, y: p.cy }
             }); 
         });
+        
+        // Add Weather Legend as Static Obstacle if present
+        if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
+            const legendW = 100; const legendH = 30; // Includes text height approx
+            const legendX = innerWidth - legendW - 10;
+            const legendY = innerHeight - 40;
+            occupied.push({
+                left: legendX - 5, top: legendY - 15,
+                right: legendX + legendW + 5, bottom: legendY + legendH + 5,
+                type: 'static'
+            });
+        }
 
         // Intersection Helper
         const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
@@ -1001,13 +1013,20 @@ class PsychrometricCard extends HTMLElement {
             return false;
         };
 
+        const isOutOfBounds = (rect) => {
+            if (rect.left < 0) return true;
+            if (rect.right > innerWidth) return true;
+            if (rect.top < 0) return true;
+            if (rect.bottom > innerHeight) return true; // Strict bottom limit
+            return false;
+        };
+
         const calculateCost = (rect, pOrigin) => {
             let cost = 0;
             // Bounds check - Penalize heavily for going outside chart area
             if (rect.left < 0) cost += 10000;
             if (rect.right > innerWidth) cost += 10000;
             if (rect.top < 0) cost += 10000;
-            // Strict bottom constraint to prevent overlapping X-axis/Legend
             if (rect.bottom > innerHeight) cost += 5000000; 
 
             for (let other of occupied) {
@@ -1015,12 +1034,13 @@ class PsychrometricCard extends HTMLElement {
                 const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
                 if (x_overlap > 0 && y_overlap > 0) {
                     const area = x_overlap * y_overlap;
-                    if (other.type === 'point') cost += area * 100; // Increase Point penalty
-                    else cost += area * 50; // Increase Label overlap penalty
+                    if (other.type === 'point') cost += area * 100; 
+                    else if (other.type === 'static') cost += area * 500; // Static obstacle penalty
+                    else cost += area * 50; 
                 }
                 
                 // Line intersection check
-                if (other.type === 'label') {
+                if (other.type === 'label' || other.type === 'static') {
                      if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
                          cost += 5000;
                      }
@@ -1031,50 +1051,82 @@ class PsychrometricCard extends HTMLElement {
 
         chartPoints.forEach(pt => {
             const strategies = [
-                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
-                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
-                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 },
-                { dist: 120, angle: -45 }, { dist: 120, angle: 45 }, { dist: 160, angle: -45 }
+                { dist: 40, angle: -45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 45 }, { dist: 40, angle: 135 },  
+                { dist: 60, angle: -90 }, { dist: 60, angle: 0 }, { dist: 60, angle: 180 },
+                { dist: 80, angle: -45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 45 }, { dist: 80, angle: 135 },
+                { dist: 120, angle: -30 }, { dist: 120, angle: -150 }, { dist: 120, angle: 30 }, { dist: 120, angle: 150 }
             ];
             let bestCandidate = null;
             let minCost = Infinity;
 
+            // First Pass: Find strict valid spot (No overlap, No OOB)
             for (let strat of strategies) {
-                const r = strat.dist;
-                const ang = strat.angle;
-                const rad = ang * (Math.PI / 180);
-                const dx = Math.cos(rad) * r;
-                const dy = Math.sin(rad) * r;
+                const rad = strat.angle * (Math.PI / 180);
+                const dx = Math.cos(rad) * strat.dist;
+                const dy = Math.sin(rad) * strat.dist;
                 
                 const boxX = (dx > 0) ? dx : (dx - boxW);
                 const boxY = (dy > 0) ? dy : (dy - boxH);
-                
                 const absBoxX = pt.cx + boxX;
                 const absBoxY = pt.cy + boxY;
                 const anchorX = pt.cx + dx;
                 const anchorY = pt.cy + dy;
 
                 const rect = { 
-                    left: absBoxX - padding, 
-                    top: absBoxY - padding, 
-                    right: absBoxX + boxW + padding, 
-                    bottom: absBoxY + boxH + padding,
-                    width: boxW + 2*padding,
-                    height: boxH + 2*padding,
-                    anchorX, anchorY
+                    left: absBoxX - padding, top: absBoxY - padding, 
+                    right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
+                    width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
                 };
                 
-                const distCost = r * 0.1;
-                const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                const totalCost = placementCost + distCost;
-                
-                if (totalCost < minCost) {
-                    minCost = totalCost;
-                    bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                // Strict check first
+                if (!isOutOfBounds(rect)) {
+                    let overlapping = false;
+                    for (let other of occupied) {
+                        const x_ov = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                        const y_ov = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                        if (x_ov > 0 && y_ov > 0) { overlapping = true; break; }
+                        if ((other.type === 'label' || other.type === 'static') && lineIntersectsRect(pt.cx, pt.cy, anchorX, anchorY, other)) {
+                            overlapping = true; break;
+                        }
+                    }
+                    if (!overlapping) {
+                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                        break; 
+                    }
                 }
-                if (minCost === 0) break; 
+            }
+
+            // Fallback: If no strict valid spot found, use cost function
+            if (!bestCandidate) {
+                for (let strat of strategies) {
+                    const rad = strat.angle * (Math.PI / 180);
+                    const dx = Math.cos(rad) * strat.dist;
+                    const dy = Math.sin(rad) * strat.dist;
+                    const boxX = (dx > 0) ? dx : (dx - boxW);
+                    const boxY = (dy > 0) ? dy : (dy - boxH);
+                    const absBoxX = pt.cx + boxX;
+                    const absBoxY = pt.cy + boxY;
+                    const anchorX = pt.cx + dx;
+                    const anchorY = pt.cy + dy;
+
+                    const rect = { 
+                        left: absBoxX - padding, top: absBoxY - padding, 
+                        right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
+                        width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
+                    };
+                    
+                    const distCost = strat.dist * 0.1;
+                    const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
+                    const totalCost = placementCost + distCost;
+                    
+                    if (totalCost < minCost) {
+                        minCost = totalCost;
+                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                    }
+                }
             }
             
+            // Absolute fallback
             if (!bestCandidate) { 
                  const dx = 40; const dy = -40; 
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
@@ -1129,5 +1181,3 @@ class PsychrometricCard extends HTMLElement {
 }
 
 customElements.define('psychrometric-card', PsychrometricCard);
-
-
