@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.9 - Reverted Collision Logic (Soft Constraints)
+ * Version 0.8.10 - Bottom-Up Label Stacking
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.9 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.10 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -969,10 +969,12 @@ class PsychrometricCard extends HTMLElement {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
             return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
         }).filter(p => p !== null);
-        chartPoints.sort((a, b) => a.cy - b.cy);
+        
+        // SORT BOTTOM TO TOP to let bottom labels claim space first
+        chartPoints.sort((a, b) => b.cy - a.cy);
         
         const occupied = []; const boxW = 170; const boxH = 65; 
-        const padding = 15; // Reverted to 15 (v0.8.5)
+        const padding = 15; 
         
         // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
@@ -1002,11 +1004,11 @@ class PsychrometricCard extends HTMLElement {
         const calculateCost = (rect, pOrigin) => {
             let cost = 0;
             // Bounds check - Penalize heavily for going outside chart area
-            // v0.8.5 values: 10,000 for normal, +extra for bottom
             if (rect.left < 0) cost += 10000;
             if (rect.right > innerWidth) cost += 10000;
             if (rect.top < 0) cost += 10000;
-            if (rect.bottom > innerHeight) cost += 20000; // Prefer not to hit legend
+            // Strict bottom constraint to prevent overlapping X-axis/Legend
+            if (rect.bottom > innerHeight) cost += 5000000; 
 
             for (let other of occupied) {
                 const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
