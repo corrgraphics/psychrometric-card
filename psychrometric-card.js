@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.10 - Bottom-Up Label Stacking
+ * Version 0.8.9 - Bottom-Up Label Stacking
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.10 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.9 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -1129,3 +1129,4 @@ class PsychrometricCard extends HTMLElement {
 }
 
 customElements.define('psychrometric-card', PsychrometricCard);
+
