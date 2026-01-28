@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.8.3 - Line Crossing Prevention
+ * Version 0.8.4 - Cost-Based Label Positioning
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.8.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v0.8.4 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -916,14 +916,57 @@ class PsychrometricCard extends HTMLElement {
         }).filter(p => p !== null);
         chartPoints.sort((a, b) => a.cy - b.cy);
         
-        const occupied = []; const boxW = 170; const boxH = 65; const padding = 5; 
+        const occupied = []; 
+        const boxW = 170; 
+        const boxH = 65; 
+        const padding = 5; 
         
         // Add markers to occupied zones with type
         chartPoints.forEach(p => { 
-            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
+            occupied.push({ 
+                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
+                type: 'point',
+                center: { x: p.cx, y: p.cy }
+            }); 
         });
 
-        // Intersection Helper
+        // Calculate Cost Function
+        const calculateCost = (rect, pOrigin) => {
+            let cost = 0;
+            
+            // 1. Chart Boundaries (Extreme Penalty)
+            if (rect.left < 0) cost += 10000;
+            if (rect.right > innerWidth) cost += 10000;
+            if (rect.top < 0) cost += 10000;
+            if (rect.bottom > innerHeight) cost += 10000;
+
+            // 2. Overlap with Existing Objects
+            for (let other of occupied) {
+                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                
+                if (x_overlap > 0 && y_overlap > 0) {
+                    const area = x_overlap * y_overlap;
+                    if (other.type === 'point') cost += area * 50; // Heavy penalty for overlapping markers
+                    else cost += area * 10; // Medium penalty for overlapping labels
+                }
+            }
+            
+            // 3. Line Intersection Check (Does my leader line cut through a label?)
+            // Line from pOrigin to rect center/closest corner
+            // Simplified check against all 'label' type occupied rects
+            for (let other of occupied) {
+                if (other.type === 'label') {
+                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
+                         cost += 5000; // Major penalty for crossing existing label
+                     }
+                }
+            }
+
+            return cost;
+        };
+
+        // Line intersection Helper
         const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
             const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
                 const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
@@ -939,58 +982,68 @@ class PsychrometricCard extends HTMLElement {
             return false;
         };
 
-        const isOverlapping = (rect) => {
-            if (rect.left < 0 || rect.right > innerWidth || rect.top < 0 || rect.bottom > innerHeight) return true;
-            for (let other of occupied) {
-                // Check if box overlaps other box
-                if (!(rect.right < other.left || rect.left > other.right || rect.bottom < other.top || rect.top > other.bottom)) return true;
-            }
-            return false;
-        };
-        
-        const isLineCrossing = (x1, y1, x2, y2) => {
-             for (let obj of occupied) {
-                 if (obj.type === 'label') { // Only prevent crossing through text boxes
-                     if (lineIntersectsRect(x1, y1, x2, y2, obj)) return true;
-                 }
-             }
-             return false;
-        };
-
         chartPoints.forEach(pt => {
-            const strategies = [
-                { dist: 40, angle: -45 }, { dist: 40, angle: 45 }, { dist: 40, angle: -135 }, { dist: 40, angle: 135 },  
-                { dist: 80, angle: -45 }, { dist: 80, angle: 45 }, { dist: 80, angle: -135 }, { dist: 80, angle: 135 },
-                { dist: 60, angle: -80 }, { dist: 60, angle: 80 }, { dist: 100, angle: -80 }, { dist: 100, angle: 80 }
+            // Generate many candidates (Radii * Angles)
+            const radii = [40, 70, 100, 140];
+            const angles = [
+                 -45, -135, 45, 135, // Diagonals
+                 -90, 90,            // Vertical
+                 0, 180              // Horizontal
             ];
-            let bestCandidate = null;
-            for (let strat of strategies) {
-                const rad = strat.angle * (Math.PI / 180);
-                const dx = Math.cos(rad) * strat.dist;
-                const dy = Math.sin(rad) * strat.dist;
-                const boxX = (dx > 0) ? dx : (dx - boxW);
-                const boxY = (dy > 0) ? dy : (dy - boxH);
-                const absBoxX = pt.cx + boxX;
-                const absBoxY = pt.cy + boxY;
-                const rect = { 
-                    left: absBoxX - padding, top: absBoxY - padding, 
-                    right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding 
-                };
-                
-                // Check 1: Box Overlap
-                if (!isOverlapping(rect)) { 
-                    // Check 2: Line Crossing
-                    const lineX2 = pt.cx + dx;
-                    const lineY2 = pt.cy + dy;
-                    if (!isLineCrossing(pt.cx, pt.cy, lineX2, lineY2)) {
-                        bestCandidate = { dx, dy, boxX, boxY }; 
-                        break; 
-                    }
-                }
-            }
-            if (!bestCandidate) { const dx = 40; const dy = -40; bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH }; }
             
-            // Add final box to occupied list as 'label'
+            let bestCandidate = null;
+            let minCost = Infinity;
+
+            for (let r of radii) {
+                for (let ang of angles) {
+                    const rad = ang * (Math.PI / 180);
+                    const dx = Math.cos(rad) * r;
+                    const dy = Math.sin(rad) * r;
+                    
+                    const boxX = (dx > 0) ? dx : (dx - boxW);
+                    const boxY = (dy > 0) ? dy : (dy - boxH);
+                    
+                    const absBoxX = pt.cx + boxX;
+                    const absBoxY = pt.cy + boxY;
+                    
+                    // The line goes to the corner/side of the box closest to the point
+                    // Simplified: Line goes to the point on the box rect closest to pt
+                    const anchorX = pt.cx + dx;
+                    const anchorY = pt.cy + dy;
+
+                    const rect = { 
+                        left: absBoxX - padding, 
+                        top: absBoxY - padding, 
+                        right: absBoxX + boxW + padding, 
+                        bottom: absBoxY + boxH + padding,
+                        width: boxW + 2*padding,
+                        height: boxH + 2*padding,
+                        anchorX, anchorY
+                    };
+                    
+                    // Distance penalty (prefer closer)
+                    const distCost = r * 0.5;
+                    
+                    const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
+                    const totalCost = placementCost + distCost;
+                    
+                    if (totalCost < minCost) {
+                        minCost = totalCost;
+                        bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
+                    }
+                    
+                    if (minCost === 0) break; // Found perfect spot
+                }
+                if (minCost < 10) break; // Found good enough spot
+            }
+            
+            // Fallback
+            if (!bestCandidate) { 
+                 const dx = 40; const dy = -40; 
+                 bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
+            }
+            
+            // Register used space
             occupied.push({ 
                 left: pt.cx + bestCandidate.boxX, 
                 top: pt.cy + bestCandidate.boxY, 
@@ -999,7 +1052,11 @@ class PsychrometricCard extends HTMLElement {
                 type: 'label' 
             });
             
-            const lineX2 = pt.cx + bestCandidate.dx; const lineY2 = pt.cy + bestCandidate.dy; const boxAbsX = pt.cx + bestCandidate.boxX; const boxAbsY = pt.cy + bestCandidate.boxY;
+            const lineX2 = bestCandidate.anchorX; 
+            const lineY2 = bestCandidate.anchorY;
+            const boxAbsX = pt.cx + bestCandidate.boxX; 
+            const boxAbsY = pt.cy + bestCandidate.boxY;
+            
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
