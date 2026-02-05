@@ -838,17 +838,21 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Axes
+        // Axes (Dynamic Steps for Metric/Imperial)
         const xTicks = [];
-        for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
+        if (this.isMetric) {
+             for (let t = -25; t <= 45; t += 5) xTicks.push({ val: PsychroMath.CtoF(t), label: t });
+        } else {
+             for (let t = -10; t <= 110; t += 10) xTicks.push({ val: t, label: t });
+        }
         
-        xTicks.forEach(t => {
-            const x = xScale(t);
+        xTicks.forEach(item => {
+            const x = xScale(item.val);
             // Axis Tick (Outside clip)
             svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${cStyle.axis}" />`;
             // Grid Line (Inside clip - collected for group)
             gridLinesSvg += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
+            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${item.label}°${this.isMetric ? 'C' : 'F'}</text>`;
         });
 
         const yTicks = [];
@@ -856,11 +860,13 @@ class PsychrometricCard extends HTMLElement {
         
         yTicks.forEach(w => {
             const y = yScale(w);
+            const labelVal = this.isMetric ? (w * 1000).toFixed(0) : (w * 7000).toFixed(0);
+            
             // Axis Tick (Outside clip)
             svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${cStyle.axis}" />`;
             // Grid Line (Inside clip - collected for group)
             gridLinesSvg += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
+            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${labelVal}</text>`;
         });
         
         // Add Clipped Grid Lines Group
@@ -869,8 +875,11 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
 
-        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
-        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
+        const xTitle = this.isMetric ? "Dry Bulb Temperature (°C)" : "Dry Bulb Temperature (°F)";
+        const yTitle = this.isMetric ? "Humidity Ratio (g/kg)" : "Humidity Ratio (grains/lb)";
+
+        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">${xTitle}</text>`;
+        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">${yTitle}</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100; const legendH = 10; const legendX = innerWidth - legendW - 10; const legendY = innerHeight - 40;
