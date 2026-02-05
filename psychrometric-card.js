@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 0.9.5 - Metric Axis Fixes
+ * Version 1.0.0 - Initial Release
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v0.9.5 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.0.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -838,22 +838,17 @@ class PsychrometricCard extends HTMLElement {
             }
         });
 
-        // Axes (Dynamic Steps for Metric/Imperial)
+        // Axes
         const xTicks = [];
-        if (this.isMetric) {
-             for (let t = -25; t <= 45; t += 5) xTicks.push(t);
-        } else {
-             for (let t = -10; t <= 110; t += 10) xTicks.push(t);
-        }
+        for (let t = tempRange[0]; t <= tempRange[1]; t += 10) xTicks.push(t);
         
-        xTicks.forEach(tDisplay => {
-            const tF = this.isMetric ? PsychroMath.CtoF(tDisplay) : tDisplay;
-            const x = xScale(tF);
+        xTicks.forEach(t => {
+            const x = xScale(t);
             // Axis Tick (Outside clip)
             svgContent += `<line x1="${x}" y1="${innerHeight}" x2="${x}" y2="${innerHeight+6}" stroke="${cStyle.axis}" />`;
             // Grid Line (Inside clip - collected for group)
             gridLinesSvg += `<line x1="${x}" y1="0" x2="${x}" y2="${innerHeight}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${tDisplay}°${this.isMetric ? 'C' : 'F'}</text>`;
+            svgContent += `<text x="${x}" y="${innerHeight+20}" text-anchor="middle" font-size="12" fill="${textColor}">${t}°F</text>`;
         });
 
         const yTicks = [];
@@ -861,13 +856,11 @@ class PsychrometricCard extends HTMLElement {
         
         yTicks.forEach(w => {
             const y = yScale(w);
-            const labelVal = this.isMetric ? (w * 1000).toFixed(0) : (w * 7000).toFixed(0);
-            
             // Axis Tick (Outside clip)
             svgContent += `<line x1="${innerWidth}" y1="${y}" x2="${innerWidth+6}" y2="${y}" stroke="${cStyle.axis}" />`;
             // Grid Line (Inside clip - collected for group)
             gridLinesSvg += `<line x1="0" y1="${y}" x2="${innerWidth}" y2="${y}" stroke="${cStyle.grid}" />`;
-            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${labelVal}</text>`;
+            svgContent += `<text x="${innerWidth+8}" y="${y+3}" font-size="12" fill="${textColor}">${(w*7000).toFixed(0)}</text>`;
         });
         
         // Add Clipped Grid Lines Group
@@ -876,11 +869,8 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
 
-        const xTitle = this.isMetric ? "Dry Bulb Temperature (°C)" : "Dry Bulb Temperature (°F)";
-        const yTitle = this.isMetric ? "Humidity Ratio (g/kg)" : "Humidity Ratio (grains/lb)";
-
-        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">${xTitle}</text>`;
-        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">${yTitle}</text>`;
+        svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">Dry Bulb Temperature (°F)</text>`;
+        svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">Humidity Ratio (grains/lb)</text>`;
 
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100; const legendH = 10; const legendX = innerWidth - legendW - 10; const legendY = innerHeight - 40;
@@ -1128,6 +1118,9 @@ class PsychrometricCard extends HTMLElement {
                     const dx = Math.cos(rad) * r;
                     const dy = Math.sin(rad) * r;
                     
+                    // Determine Box Origin based on direction
+                    // If line goes right (dx>0), box is to the right. 
+                    // If line goes left (dx<0), box is to the left (x - boxW).
                     const boxX = (dx > 0) ? dx : (dx - boxW);
                     const boxY = (dy > 0) ? dy : (dy - boxH);
                     
