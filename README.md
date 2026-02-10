@@ -186,29 +186,30 @@ The green box labeled “comfort zone” in the screenshots shown above is rende
 |1.55 to 2 | noticeably draughty|
 
 
-Clothing Level - When you are at home, what are you typically wearing?
+|Clothing Level | When you are at home, what are you typically wearing?|
+|:-----|:-----|
+|0 | Naked|
+|.05 | Underwear Only|
+|.1 to .15 | Shorts Only - No Shoes|
+|.2 to .35 | Shorts and T-Shirt - No Shoes|
+|.4 to .55 | Shorts and T-Shirt, Shoes|
+|.6 to .75 | Pants, Shirt, Shoes|
+|.8 to 1.15 | Pants, Shirt, Jacket, Shoes|
+|1.2+ | You are probably heading outside…|
 
-0 - Naked
-.05 - Underwear Only
-.1 to .15 - Shorts Only - No Shoes
-.2 to .35 - Shorts and T-Shirt - No Shoes
-.4 to .55 - Shorts and T-Shirt, Shoes
-.6 to .75 - Pants, Shirt, Shoes
-.8 to 1.15 - Pants, Shirt, Jacket, Shoes
-1.2+ - You are probably heading outside…
-Metabolic Rate - The heat your body is producing
-
-0 - you are dead
-.05 to .2 - approaching death
-.25 to .4 - sleeping
-.45 to .6 - resting
-.65 to .8 - reclining and relaxed
-.85 to .95 - seated and relaxed
-1 to 1.1 - seated w/ sedentary activity
-1.15 to 1.2 - standing and relaxed
-1.25 to 1.4 - seated with light activity
-1.45 to 1.6 - standing with light activity
-1.65 to 1.95 - walking
-2+ - working out
+|Metabolic Rate | The heat your body is producing|
+|:-----|:-----|
+|0 | you are dead|
+|.05 to .2 | approaching death|
+|.25 to .4 | sleeping|
+|.45 to .6 | resting|
+|.65 to .8 | reclining and relaxed|
+|.85 to .95 | seated and relaxed|
+|1 to 1.1 | seated w/ sedentary activity|
+|1.15 to 1.2 | standing and relaxed|
+|1.25 to 1.4 | seated with light activity|
+|1.45 to 1.6 | standing with light activity|
+|1.65 to 1.95 | walking|
+|2+ | working out|
 
 You can input these or leave them @ default. Or you can create input sensors in home assistant to dynamically change this. (ie, sleeping @ night, motion or presence sensors to detect motion, seasonal clothing changes, etc.) Just add the sensor entity to the corresponding yaml config.
