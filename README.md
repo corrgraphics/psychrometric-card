@@ -179,14 +179,15 @@ The green box labeled “comfort zone” in the screenshots shown above is rende
 
 Air Velocity - The air moving around in your home. Do you have forced air hear or radiant heat. Fans, Poor Insulation, Etc.
 
-| Name | Type | Description |
-|:-----|:-----|:------------|
-| `saturation_line` | string | Saturation line color |
-|.05 to .25 m/s|unnoticeably still|
-.3 to .5 m/s - pleasantly still
-.55 to 1 m/s - pleasant but noticeable
-1.05 to 1.5 - slightly draughty
-1.55 to 2 - noticeably draughty
+| Name | Type |
+|:-----|:-----|
+|.05 to .25 m/s | unnoticeably still|
+|.3 to .5 m/s | pleasantly still|
+|.55 to 1 m/s | pleasant but noticeable|
+|1.05 to 1.5 | slightly draughty|
+|1.55 to 2 | noticeably draughty|
+
+
 Clothing Level - When you are at home, what are you typically wearing?
 
 0 - Naked
