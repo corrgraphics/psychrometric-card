@@ -177,9 +177,7 @@ The ASHRAE 55 Standard is: Thermal Environmental Conditions for Human Occupancy.
 
 The green box labeled “comfort zone” in the screenshots shown above is rendered based on inputs to your yaml config.
 
-Air Velocity - The air moving around in your home. Do you have forced air hear or radiant heat. Fans, Poor Insulation, Etc.
-
-| Name | Type |
+| Air Velocity | The air moving around in your home. Do you have forced air hear or radiant heat. Fans, Poor Insulation, Etc.|
 |:-----|:-----|
 |.05 to .25 m/s | unnoticeably still|
 |.3 to .5 m/s | pleasantly still|
