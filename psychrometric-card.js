@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 1.1.1 - Fix Crash & Spinner
+ * Version 1.1.2 - Stabilized Arrows & Reduced Jitter
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v1.1.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.1.2 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -321,7 +321,16 @@ class PsychrometricCard extends HTMLElement {
         const trailSig = this.trailPoints ? this.trailPoints.length : 0;
         const trendSig = this.enthalpyHistory ? this.enthalpyHistory.length : 0;
         const loadingSig = this.historyLoading;
-        const dataSig = JSON.stringify(newPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
+        
+        // Stabilize redrawing by rounding values for the signature check
+        const sigPoints = newPoints.map(p => ({
+            id: p.id,
+            db: p.db.toFixed(1),
+            w: p.w.toFixed(5),
+            rh: p.rh.toFixed(1)
+        }));
+        
+        const dataSig = JSON.stringify(sigPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -612,7 +621,7 @@ class PsychrometricCard extends HTMLElement {
                 100% { transform: translate(var(--ax), var(--ay)); opacity: 0; }
             }
             .trend-arrow {
-                animation: arrow-slide 1.5s infinite ease-out;
+                animation: arrow-slide 2.0s infinite ease-out;
             }
         `;
 
@@ -1083,13 +1092,21 @@ class PsychrometricCard extends HTMLElement {
         
         // Add points to occupied space (small markers)
         chartPoints.forEach(p => { 
-            occupied.push({ 
-                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
-                type: 'point',
-                center: { x: p.cx, y: p.cy }
-            }); 
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
         });
         
+        // Add Trend Arrows to occupied space (prevent overlap)
+        Object.keys(this.pointTrends).forEach(idx => {
+             const trend = this.pointTrends[idx];
+             if(trend && trend.mag > 15) {
+                 occupied.push({ 
+                     left: trend.ax - 10, top: trend.ay - 10, 
+                     right: trend.ax + 10, bottom: trend.ay + 10, 
+                     type: 'static' 
+                 });
+             }
+        });
+
         // Add Weather Legend area as obstacle
         if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
             const legendW = 100; const legendH = 40; 
@@ -1123,40 +1140,6 @@ class PsychrometricCard extends HTMLElement {
             return false;
         };
 
-        // --- Helper: Calculate Cost ---
-        const calculateCost = (rect, pOrigin) => {
-            let cost = 0;
-            // 1. Chart Boundaries (Extreme Penalty)
-            // Allow slight spill over top/right if absolutely necessary, but strict on left/bottom
-            if (rect.left < 0) cost += 100000;
-            if (rect.right > innerWidth) cost += 50000; 
-            if (rect.top < 0) cost += 50000;
-            if (rect.bottom > innerHeight) cost += 100000; // Protect legend/axis
-
-            // 2. Overlap with Existing Objects
-            for (let other of occupied) {
-                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                
-                if (x_overlap > 0 && y_overlap > 0) {
-                    const area = x_overlap * y_overlap;
-                    if (other.type === 'point') cost += area * 100; // Don't cover points
-                    else if (other.type === 'static') cost += area * 500; // Don't cover legend
-                    else cost += area * 50; // Don't cover other labels
-                }
-                
-                // 3. Line intersection check (Prevent lines crossing other labels)
-                if (other.type === 'label' || other.type === 'static') {
-                     // Check if leader line crosses this occupied block
-                     // rect.anchorX/Y is where the line connects to the current label
-                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 5000; // Significant penalty
-                     }
-                }
-            }
-            return cost;
-        };
-
         chartPoints.forEach(pt => {
             // Vector from center (escape vector)
             let vx = pt.cx - center.x;
@@ -1167,7 +1150,7 @@ class PsychrometricCard extends HTMLElement {
             
             // Strategies: Radii * Angles
             // Expand radii significantly to find empty space
-            const radii = [40, 70, 100, 140, 180, 220]; 
+            const radii = [40, 70, 110, 150, 190, 220]; 
             // Scan around the preferred angle first, then wider
             const angleOffsets = [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180];
             
@@ -1216,47 +1199,9 @@ class PsychrometricCard extends HTMLElement {
                 }
                 if (minCost === 0) break;
             }
-
-            // Fallback: If no strict valid spot found, try cost function (might pick slight overlap)
-            if (!bestCandidate) {
-                for (let r of radii) {
-                    for (let offset of angleOffsets) {
-                        const ang = preferredAngle + offset;
-                        const rad = ang * (Math.PI / 180);
-                        const dx = Math.cos(rad) * r;
-                        const dy = Math.sin(rad) * r;
-                        
-                        const boxX = (dx > 0) ? dx : (dx - boxW);
-                        const boxY = (dy > 0) ? dy : (dy - boxH);
-                        
-                        const absBoxX = pt.cx + boxX;
-                        const absBoxY = pt.cy + boxY;
-                        const anchorX = pt.cx + dx;
-                        const anchorY = pt.cy + dy;
-
-                        const rect = { 
-                            left: absBoxX - padding, top: absBoxY - padding, 
-                            right: absBoxX + boxW + padding, bottom: absBoxY + boxH + padding,
-                            width: boxW + 2*padding, height: boxH + 2*padding, anchorX, anchorY
-                        };
-                        
-                        const distCost = r * 0.1;
-                        // Add penalty for deviation from preferred angle
-                        const angleCost = Math.abs(offset) * 0.5;
-
-                        const placementCost = calculateCost(rect, {x: pt.cx, y: pt.cy});
-                        const totalCost = placementCost + distCost + angleCost;
-                        
-                        if (totalCost < minCost) {
-                            minCost = totalCost;
-                            bestCandidate = { dx, dy, boxX, boxY, anchorX, anchorY };
-                        }
-                    }
-                }
-            }
             
-            // Absolute fallback
-            if (!bestCandidate) { 
+            // Fallback
+            if (!bestCandidate) {
                  const dx = 40; const dy = -40; 
                  bestCandidate = { dx, dy, boxX: dx, boxY: dy - boxH, anchorX: pt.cx+dx, anchorY: pt.cy+dy }; 
             }
@@ -1287,7 +1232,7 @@ class PsychrometricCard extends HTMLElement {
                 const vy = pt.cy - trendCy;
                 const mag = Math.hypot(vx, vy);
                 
-                if (mag > 3) { // Threshold 3px
+                if (mag > 15) { // Increased threshold
                     const angleDeg = Math.atan2(vy, vx) * (180 / Math.PI);
                     const arrDist = 12; 
                     const ax = pt.cx + (vx/mag)*arrDist;
@@ -1324,8 +1269,7 @@ class PsychrometricCard extends HTMLElement {
             }
 
             // Create gradient style for the label box
-            const rgbaColor = ColorUtils.hexToRgba(pt.color, 0.15); // Low opacity version of point color
-            // Using the user-configured background color as the base
+            const rgbaColor = ColorUtils.hexToRgba(pt.color, 0.15); 
             const baseBg = this._config.style.label_background;
             const gradientStyle = `background: linear-gradient(135deg, ${rgbaColor} 0%, ${baseBg} 100%);`;
 
