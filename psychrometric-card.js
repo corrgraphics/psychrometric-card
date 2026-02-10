@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 1.0.3 - Smart Trend Grid Spacing
+ * Version 1.1.0 - Gradient Labels & Trend Arrows
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v1.0.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -23,6 +23,11 @@ const ColorUtils = {
         ctx.fillRect(0, 0, 1, 1);
         const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
         return { r, g, b, a: a / 255 };
+    },
+    // Helper to get rgba string with custom alpha
+    hexToRgba: (color, alpha) => {
+        const c = ColorUtils.parseColor(color);
+        return `rgba(${c.r}, ${c.g}, ${c.b}, ${alpha})`;
     },
     interpolate: (c1, c2, factor) => {
         const r = Math.round(c1.r + (c2.r - c1.r) * factor);
@@ -214,6 +219,7 @@ class PsychrometricCard extends HTMLElement {
         this.weatherPoints = [];
         this.trailPoints = [];
         this.enthalpyHistory = [];
+        this.pointTrends = {}; // Store {dx, dy} for direction arrows
         this.weatherLoaded = false;
         this.historyLoading = false;
         this.lastHistoryFetch = 0;
@@ -285,7 +291,7 @@ class PsychrometricCard extends HTMLElement {
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
         const newPoints = [];
 
-        this._config.points.forEach(ptConfig => {
+        this._config.points.forEach((ptConfig, index) => {
             let temp = this.getEntityValue(ptConfig.temperature_entity);
             let hum = this.getEntityValue(ptConfig.humidity_entity);
             
@@ -294,6 +300,7 @@ class PsychrometricCard extends HTMLElement {
                 const w = PsychroMath.getWFromRelHum(db_calc, hum, pressure);
                 
                 newPoints.push({
+                    id: index, // Use index for trend mapping
                     name: ptConfig.name || "Point",
                     icon: ptConfig.icon || "mdi:circle",
                     color: ptConfig.color || "var(--primary-text-color)",
@@ -399,11 +406,34 @@ class PsychrometricCard extends HTMLElement {
 
         this.trailPoints = []; 
         this.enthalpyHistory = [];
+        this.pointTrends = {}; // Reset trends
 
         const now = new Date();
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
-        
         const getValF = (val) => this.isMetric ? PsychroMath.CtoF(val) : val;
+
+        // Calculate Trends (Approx 1 hour ago)
+        const trendTime = now.getTime() - (60 * 60 * 1000); 
+
+        this._config.points.forEach((ptConfig, index) => {
+            const tHist = historyMap[ptConfig.temperature_entity];
+            const hHist = historyMap[ptConfig.humidity_entity];
+            
+            if (tHist && hHist) {
+                // Find point ~1 hour ago for direction arrow
+                const tPast = this.findStateAtTime(tHist, trendTime);
+                const hPast = this.findStateAtTime(hHist, trendTime);
+                
+                if (tPast && hPast) {
+                    const dbPast = getValF(parseFloat(tPast.state));
+                    const rhPast = parseFloat(hPast.state);
+                    if (!isNaN(dbPast) && !isNaN(rhPast)) {
+                         const wPast = PsychroMath.getWFromRelHum(dbPast, rhPast, pressure);
+                         this.pointTrends[index] = { db: dbPast, w: wPast };
+                    }
+                }
+            }
+        });
 
         if (this._config.enable_trails) {
             const duration = this._config.trail_hours * 60 * 60 * 1000;
@@ -541,7 +571,7 @@ class PsychrometricCard extends HTMLElement {
                 height: 100%;
                 box-sizing: border-box;
                 border: 1px solid; 
-                border-radius: 4px;
+                border-radius: 8px; /* Rounder corners */
                 backdrop-filter: blur(4px);
                 -webkit-backdrop-filter: blur(4px);
                 color: var(--primary-text-color);
@@ -551,7 +581,7 @@ class PsychrometricCard extends HTMLElement {
                 display: flex;
                 flex-direction: column;
                 justify-content: center;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             }
             .label-row { white-space: nowrap; }
             .label-title { font-weight: bold; font-size: 11px; margin-bottom: 2px; }
@@ -575,6 +605,17 @@ class PsychrometricCard extends HTMLElement {
             }
             .loading-dot:nth-child(1) { animation-delay: -0.32s; }
             .loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+            /* Arrow Animation */
+            @keyframes arrow-slide {
+                0% { transform: translate(0, 0); opacity: 0; }
+                20% { opacity: 1; }
+                80% { opacity: 1; }
+                100% { transform: translate(var(--ax), var(--ay)); opacity: 0; }
+            }
+            .trend-arrow {
+                animation: arrow-slide 1.5s infinite ease-out;
+            }
         `;
 
         this.shadowRoot.appendChild(style);
@@ -950,19 +991,11 @@ class PsychrometricCard extends HTMLElement {
                     });
                 });
                 
-                // Adjust bounds to nice ticks
                 let hRange = maxH - minH;
-                if (hRange < 1) hRange = 1; // Prevent zero range
-                
-                // Target ~5 divisions max
-                let rawStep = hRange / 4; 
-                let step = 1;
-                
-                if (rawStep > 10) step = 20;
-                else if (rawStep > 5) step = 10;
-                else if (rawStep > 2) step = 5;
-                else if (rawStep > 1) step = 2;
-                else step = 1;
+                let step = 5;
+                if (hRange < 10) step = 1;
+                else if (hRange < 30) step = 5;
+                else step = 10;
                 
                 minH = Math.floor(minH / step) * step;
                 maxH = Math.ceil(maxH / step) * step;
@@ -1018,88 +1051,19 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<g class="trails">${trailsSvg}</g>`;
         svgContent += `<g class="trend">${trendSvg}</g>`; 
 
-        // --- LAYER 4: POINTS & LABELS ---
+        // --- LAYER 4: POINTS & LABELS WITH CENTROID FANNING ---
+        
+        // 1. Calculate Coordinates and Centroid
         const chartPoints = this.points.map(pt => {
             if (pt.db < tempRange[0] || pt.db > tempRange[1] || pt.w > humRange[1]) return null;
-            return { ...pt, cx: xScale(pt.db), cy: yScale(pt.w) };
-        }).filter(p => p !== null);
-        
-        // SORT BOTTOM TO TOP to let bottom labels claim space first
-        chartPoints.sort((a, b) => b.cy - a.cy);
-        
-        const occupied = []; const boxW = 170; const boxH = 65; 
-        const padding = 15; 
-        
-        // Add markers to occupied zones with type
-        chartPoints.forEach(p => { 
-            occupied.push({ 
-                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
-                type: 'point',
-                center: { x: p.cx, y: p.cy }
-            }); 
-        });
-        
-        // Add Weather Legend area as obstacle
-        if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
-            const legendW = 100; const legendH = 40; 
-            const legendX = innerWidth - legendW - 10;
-            const legendY = innerHeight - 40;
-            occupied.push({ left: legendX - 10, top: legendY - 10, right: legendX + legendW + 10, bottom: legendY + legendH + 10, type: 'static' });
-        }
-
-        // Intersection Helper
-        const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
-            const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
-                const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
-                if (det === 0) return false;
-                const lambda = ((p4y - p3y) * (p4x - p1x) + (p3x - p4x) * (p4y - p1y)) / det;
-                const gamma = ((p1y - p2y) * (p4x - p1x) + (p2x - p1x) * (p4y - p1y)) / det;
-                return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
+            return {
+                ...pt,
+                cx: xScale(pt.db),
+                cy: yScale(pt.w)
             };
-            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.right, rect.top)) return true;
-            if (intersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.right, rect.bottom)) return true;
-            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.left, rect.bottom)) return true;
-            if (intersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom)) return true;
-            return false;
-        };
+        }).filter(p => p !== null);
 
-        const isOutOfBounds = (rect) => {
-            if (rect.left < 0) return true;
-            if (rect.right > innerWidth) return true;
-            if (rect.top < 0) return true;
-            if (rect.bottom > innerHeight) return true; // Strict bottom limit
-            return false;
-        };
-
-        const calculateCost = (rect, pOrigin) => {
-            let cost = 0;
-            // Bounds check - Penalize heavily for going outside chart area
-            if (rect.left < 0) cost += 10000;
-            if (rect.right > innerWidth) cost += 10000;
-            if (rect.top < 0) cost += 10000;
-            if (rect.bottom > innerHeight) cost += 5000000; 
-
-            for (let other of occupied) {
-                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
-                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
-                if (x_overlap > 0 && y_overlap > 0) {
-                    const area = x_overlap * y_overlap;
-                    if (other.type === 'point') cost += area * 100; // Increase Point penalty
-                    else if (other.type === 'static') cost += area * 500; // Static obstacle penalty
-                    else cost += area * 50; // Increase Label overlap penalty
-                }
-                
-                // Line intersection check
-                if (other.type === 'label' || other.type === 'static') {
-                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
-                         cost += 5000;
-                     }
-                }
-            }
-            return cost;
-        };
-
-        // CENTROID CALCULATION
+        // Center of mass for cluster fanning
         let cxSum = 0, cySum = 0;
         chartPoints.forEach(pt => { cxSum += pt.cx; cySum += pt.cy; });
         const center = chartPoints.length > 0 
@@ -1112,6 +1076,73 @@ class PsychrometricCard extends HTMLElement {
              const distB = Math.hypot(b.cx - center.x, b.cy - center.y);
              return distA - distB;
         });
+        
+        const occupied = []; const boxW = 170; const boxH = 65; 
+        const padding = 20; 
+        
+        // Add points to occupied space (small markers)
+        chartPoints.forEach(p => { 
+            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
+        });
+        
+        // Add Weather Legend area as obstacle
+        if (this.weatherLoaded && this.weatherPoints.length > 0 && maxBinCount > 0) {
+            const legendW = 100; const legendH = 40; 
+            const legendX = innerWidth - legendW - 10;
+            const legendY = innerHeight - 40;
+            occupied.push({ left: legendX - 10, top: legendY - 10, right: legendX + legendW + 10, bottom: legendY + legendH + 10, type: 'static' });
+        }
+
+        // --- Helper: Line Intersection ---
+        const lineIntersectsRect = (x1, y1, x2, y2, rect) => {
+            const intersect = (p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) => {
+                const det = (p2x - p1x) * (p4y - p3y) - (p4x - p3x) * (p2y - p1y);
+                if (det === 0) return false;
+                const lambda = ((p4y - p3y) * (p4x - p1x) + (p3x - p4x) * (p4y - p1y)) / det;
+                const gamma = ((p1y - p2y) * (p4x - p1x) + (p2x - p1x) * (p4y - p1y)) / det;
+                return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
+            };
+            // Check intersection with all 4 sides of the rect
+            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.right, rect.top)) return true;
+            if (intersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.right, rect.bottom)) return true;
+            if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.left, rect.bottom)) return true;
+            if (intersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom)) return true;
+            return false;
+        };
+
+        // --- Helper: Calculate Cost ---
+        const calculateCost = (rect, pOrigin) => {
+            let cost = 0;
+            // 1. Chart Boundaries (Extreme Penalty)
+            // Allow slight spill over top/right if absolutely necessary, but strict on left/bottom
+            if (rect.left < 0) cost += 100000;
+            if (rect.right > innerWidth) cost += 50000; 
+            if (rect.top < 0) cost += 50000;
+            if (rect.bottom > innerHeight) cost += 100000; // Protect legend/axis
+
+            // 2. Overlap with Existing Objects
+            for (let other of occupied) {
+                const x_overlap = Math.max(0, Math.min(rect.right, other.right) - Math.max(rect.left, other.left));
+                const y_overlap = Math.max(0, Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top));
+                
+                if (x_overlap > 0 && y_overlap > 0) {
+                    const area = x_overlap * y_overlap;
+                    if (other.type === 'point') cost += area * 100; // Don't cover points
+                    else if (other.type === 'static') cost += area * 500; // Don't cover legend
+                    else cost += area * 50; // Don't cover other labels
+                }
+                
+                // 3. Line intersection check (Prevent lines crossing other labels)
+                if (other.type === 'label' || other.type === 'static') {
+                     // Check if leader line crosses this occupied block
+                     // rect.anchorX/Y is where the line connects to the current label
+                     if (lineIntersectsRect(pOrigin.x, pOrigin.y, rect.anchorX, rect.anchorY, other)) {
+                         cost += 5000; // Significant penalty
+                     }
+                }
+            }
+            return cost;
+        };
 
         chartPoints.forEach(pt => {
             // Vector from center (escape vector)
@@ -1123,7 +1154,7 @@ class PsychrometricCard extends HTMLElement {
             
             // Strategies: Radii * Angles
             // Expand radii significantly to find empty space
-            const radii = [40, 70, 110, 150, 190, 220]; 
+            const radii = [40, 70, 100, 140, 180, 220]; 
             // Scan around the preferred angle first, then wider
             const angleOffsets = [0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180];
             
@@ -1232,6 +1263,45 @@ class PsychrometricCard extends HTMLElement {
             const boxAbsY = pt.cy + bestCandidate.boxY;
             
             pointsSvg += `<circle cx="${pt.cx}" cy="${pt.cy}" r="5" fill="none" stroke="${pt.color}" stroke-width="2" />`;
+            
+            // Draw Trend Arrow if significant movement
+            const trend = this.pointTrends[pt.id];
+            if (trend) {
+                // Calculate trend in screen coords
+                const trendCx = xScale(trend.db);
+                const trendCy = yScale(trend.w);
+                
+                const vx = pt.cx - trendCx; // vector from past to now
+                const vy = pt.cy - trendCy;
+                const mag = Math.hypot(vx, vy);
+                
+                if (mag > 3) { // Threshold 3px
+                    // Arrow geometry: Simple chevron
+                    // Rotate to point in direction of change
+                    const angleDeg = Math.atan2(vy, vx) * (180 / Math.PI);
+                    // Position arrow near the marker, slightly offset in direction of travel
+                    const arrDist = 12; 
+                    const ax = pt.cx + (vx/mag)*arrDist;
+                    const ay = pt.cy + (vy/mag)*arrDist;
+                    
+                    // Add arrow group with rotation and animation
+                    // Animation: Slide from 0 to actual offset? Or pulse?
+                    // Simple translate animation via CSS class 'trend-arrow'
+                    // We need to inject the delta into CSS var or animate logic
+                    // Simplified: Static arrow for now, CSS keyframes hard without dynamic vars per point
+                    // Let's use a standard transform rotation
+                    
+                    const arrowPath = `M -4 -4 L 0 0 L -4 4`; // Chevron pointing right (0 deg)
+                    
+                    // We can animate opacity or small slide using inline style for custom props
+                    pointsSvg += `
+                        <g transform="translate(${ax}, ${ay}) rotate(${angleDeg})" style="--ax: ${vx/mag * 5}px; --ay: ${vy/mag * 5}px">
+                            <path d="${arrowPath}" fill="none" stroke="${pt.color}" stroke-width="2" class="trend-arrow" />
+                        </g>
+                    `;
+                }
+            }
+
             labelsSvg += `<line x1="${pt.cx}" y1="${pt.cy}" x2="${lineX2}" y2="${lineY2}" stroke="${pt.color}" stroke-width="1" />`;
             
             const p_w = PsychroMath.getPwFromW(pt.w, pressure); 
@@ -1252,7 +1322,13 @@ class PsychrometricCard extends HTMLElement {
                 lines = [ pt.name, `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, `h: ${h.toFixed(1)} Btu/lb | W: ${w_grains.toFixed(1)} gr/lb` ];
             }
 
-            labelsSvg += `<foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}"><div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; background: ${this._config.style.label_background};"><div class="label-title">${lines[0]}</div><div class="label-row">${lines[1]}</div><div class="label-row">${lines[2]}</div><div class="label-row">${lines[3]}</div></div></foreignObject>`;
+            // Create gradient style for the label box
+            const rgbaColor = ColorUtils.hexToRgba(pt.color, 0.15); // Low opacity version of point color
+            // Using the user-configured background color as the base
+            const baseBg = this._config.style.label_background;
+            const gradientStyle = `background: linear-gradient(135deg, ${rgbaColor} 0%, ${baseBg} 100%);`;
+
+            labelsSvg += `<foreignObject x="${boxAbsX}" y="${boxAbsY}" width="${boxW}" height="${boxH}"><div xmlns="http://www.w3.org/1999/xhtml" class="label-box" style="border-color: ${pt.color}; ${gradientStyle}"><div class="label-title">${lines[0]}</div><div class="label-row">${lines[1]}</div><div class="label-row">${lines[2]}</div><div class="label-row">${lines[3]}</div></div></foreignObject>`;
         });
 
         svgContent += `<g class="labels">${labelsSvg}</g>`;
