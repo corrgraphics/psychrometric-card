@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 1.1.0 - Gradient Labels & Trend Arrows
+ * Version 1.1.1 - Fix Crash & Spinner
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v1.1.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.1.1 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -300,7 +300,7 @@ class PsychrometricCard extends HTMLElement {
                 const w = PsychroMath.getWFromRelHum(db_calc, hum, pressure);
                 
                 newPoints.push({
-                    id: index, // Use index for trend mapping
+                    id: index, 
                     name: ptConfig.name || "Point",
                     icon: ptConfig.icon || "mdi:circle",
                     color: ptConfig.color || "var(--primary-text-color)",
@@ -412,7 +412,6 @@ class PsychrometricCard extends HTMLElement {
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
         const getValF = (val) => this.isMetric ? PsychroMath.CtoF(val) : val;
 
-        // Calculate Trends (Approx 1 hour ago)
         const trendTime = now.getTime() - (60 * 60 * 1000); 
 
         this._config.points.forEach((ptConfig, index) => {
@@ -420,7 +419,6 @@ class PsychrometricCard extends HTMLElement {
             const hHist = historyMap[ptConfig.humidity_entity];
             
             if (tHist && hHist) {
-                // Find point ~1 hour ago for direction arrow
                 const tPast = this.findStateAtTime(tHist, trendTime);
                 const hPast = this.findStateAtTime(hHist, trendTime);
                 
@@ -954,7 +952,9 @@ class PsychrometricCard extends HTMLElement {
                     <rect x="0" y="0" width="${tW}" height="${tH}" fill="transparent" />
                     <g transform="translate(${tW/2 - 50}, ${tH/2 - 15})">
                          <rect x="0" y="0" width="120" height="30" rx="15" fill="${this._config.style.label_background}" stroke="${cStyle.axis}" stroke-width="1" />
-                         <circle cx="20" cy="15" r="6" fill="none" stroke="${textColor}" stroke-width="2" stroke-dasharray="10 6" class="spinner" />
+                         <g transform="translate(20, 15)">
+                             <circle r="6" fill="none" stroke="${textColor}" stroke-width="2" stroke-dasharray="10 6" class="spinner" />
+                         </g>
                          <text x="35" y="19" font-size="10" fill="${textColor}" font-weight="bold">Loading...</text>
                     </g>
                 </g>
@@ -991,6 +991,7 @@ class PsychrometricCard extends HTMLElement {
                     });
                 });
                 
+                // Adjust bounds to nice ticks
                 let hRange = maxH - minH;
                 let step = 5;
                 if (hRange < 10) step = 1;
@@ -1082,7 +1083,11 @@ class PsychrometricCard extends HTMLElement {
         
         // Add points to occupied space (small markers)
         chartPoints.forEach(p => { 
-            occupied.push({ left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, type: 'point' }); 
+            occupied.push({ 
+                left: p.cx - 10, top: p.cy - 10, right: p.cx + 10, bottom: p.cy + 10, 
+                type: 'point',
+                center: { x: p.cx, y: p.cy }
+            }); 
         });
         
         // Add Weather Legend area as obstacle
@@ -1107,6 +1112,14 @@ class PsychrometricCard extends HTMLElement {
             if (intersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.right, rect.bottom)) return true;
             if (intersect(x1, y1, x2, y2, rect.left, rect.top, rect.left, rect.bottom)) return true;
             if (intersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom)) return true;
+            return false;
+        };
+        
+        const isOutOfBounds = (rect) => {
+            if (rect.left < 0) return true;
+            if (rect.right > innerWidth) return true;
+            if (rect.top < 0) return true;
+            if (rect.bottom > innerHeight) return true;
             return false;
         };
 
@@ -1267,7 +1280,6 @@ class PsychrometricCard extends HTMLElement {
             // Draw Trend Arrow if significant movement
             const trend = this.pointTrends[pt.id];
             if (trend) {
-                // Calculate trend in screen coords
                 const trendCx = xScale(trend.db);
                 const trendCy = yScale(trend.w);
                 
@@ -1276,24 +1288,13 @@ class PsychrometricCard extends HTMLElement {
                 const mag = Math.hypot(vx, vy);
                 
                 if (mag > 3) { // Threshold 3px
-                    // Arrow geometry: Simple chevron
-                    // Rotate to point in direction of change
                     const angleDeg = Math.atan2(vy, vx) * (180 / Math.PI);
-                    // Position arrow near the marker, slightly offset in direction of travel
                     const arrDist = 12; 
                     const ax = pt.cx + (vx/mag)*arrDist;
                     const ay = pt.cy + (vy/mag)*arrDist;
                     
-                    // Add arrow group with rotation and animation
-                    // Animation: Slide from 0 to actual offset? Or pulse?
-                    // Simple translate animation via CSS class 'trend-arrow'
-                    // We need to inject the delta into CSS var or animate logic
-                    // Simplified: Static arrow for now, CSS keyframes hard without dynamic vars per point
-                    // Let's use a standard transform rotation
+                    const arrowPath = `M -4 -4 L 0 0 L -4 4`; 
                     
-                    const arrowPath = `M -4 -4 L 0 0 L -4 4`; // Chevron pointing right (0 deg)
-                    
-                    // We can animate opacity or small slide using inline style for custom props
                     pointsSvg += `
                         <g transform="translate(${ax}, ${ay}) rotate(${angleDeg})" style="--ax: ${vx/mag * 5}px; --ay: ${vy/mag * 5}px">
                             <path d="${arrowPath}" fill="none" stroke="${pt.color}" stroke-width="2" class="trend-arrow" />
