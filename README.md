@@ -170,3 +170,46 @@ https://cssgradient.io/
 
 Resource for determining ASHRAE 55 parameters for your space.
 https://comfort.cbe.berkeley.edu/
+
+## ASHRAE 55 Information
+
+The ASHRAE 55 Standard is: Thermal Environmental Conditions for Human Occupancy.
+
+The green box labeled “comfort zone” in the screenshots shown above is rendered based on inputs to your yaml config.
+
+Air Velocity - The air moving around in your home. Do you have forced air hear or radiant heat. Fans, Poor Insulation, Etc.
+
+| Name | Type | Description |
+|:-----|:-----|:------------|
+| `saturation_line` | string | Saturation line color |
+|.05 to .25 m/s|unnoticeably still|
+.3 to .5 m/s - pleasantly still
+.55 to 1 m/s - pleasant but noticeable
+1.05 to 1.5 - slightly draughty
+1.55 to 2 - noticeably draughty
+Clothing Level - When you are at home, what are you typically wearing?
+
+0 - Naked
+.05 - Underwear Only
+.1 to .15 - Shorts Only - No Shoes
+.2 to .35 - Shorts and T-Shirt - No Shoes
+.4 to .55 - Shorts and T-Shirt, Shoes
+.6 to .75 - Pants, Shirt, Shoes
+.8 to 1.15 - Pants, Shirt, Jacket, Shoes
+1.2+ - You are probably heading outside…
+Metabolic Rate - The heat your body is producing
+
+0 - you are dead
+.05 to .2 - approaching death
+.25 to .4 - sleeping
+.45 to .6 - resting
+.65 to .8 - reclining and relaxed
+.85 to .95 - seated and relaxed
+1 to 1.1 - seated w/ sedentary activity
+1.15 to 1.2 - standing and relaxed
+1.25 to 1.4 - seated with light activity
+1.45 to 1.6 - standing with light activity
+1.65 to 1.95 - walking
+2+ - working out
+
+You can input these or leave them @ default. Or you can create input sensors in home assistant to dynamically change this. (ie, sleeping @ night, motion or presence sensors to detect motion, seasonal clothing changes, etc.) Just add the sensor entity to the corresponding yaml config.
