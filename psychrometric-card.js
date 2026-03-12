@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 1.1.3 - Arrow Thresholds & Label Spacing
+ * Version 1.2.0 - Dynamic Entities for Comfort Parameters
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v1.1.3 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -218,12 +218,23 @@ class PsychrometricCard extends HTMLElement {
         this.trailPoints = [];
         this.enthalpyHistory = [];
         this.pointTrends = {}; 
+        this.resolvedParams = { clo: 0.5, met: 1.1, vel: 20 };
         this.weatherLoaded = false;
         this.historyLoading = false;
         this.lastHistoryFetch = 0;
         this.card = null;
         this.parsedHeatmapColors = [];
         this.isMetric = false;
+    }
+
+    resolveParam(val, defaultVal) {
+        if (val === undefined || val === null) return defaultVal;
+        if (typeof val === 'string' && this._hass && this._hass.states[val]) {
+            const stateVal = parseFloat(this._hass.states[val].state);
+            return isNaN(stateVal) ? defaultVal : stateVal;
+        }
+        const parsed = parseFloat(val);
+        return isNaN(parsed) ? defaultVal : parsed;
     }
 
     setConfig(config) {
@@ -244,9 +255,9 @@ class PsychrometricCard extends HTMLElement {
 
         this._config = {
             ...config,
-            clothing_level: config.clothing_level !== undefined ? parseFloat(config.clothing_level) : 0.5,
-            metabolic_rate: config.metabolic_rate !== undefined ? parseFloat(config.metabolic_rate) : 1.1,
-            air_velocity: config.air_velocity !== undefined ? parseFloat(config.air_velocity) : 20,
+            clothing_level: config.clothing_level !== undefined ? config.clothing_level : 0.5,
+            metabolic_rate: config.metabolic_rate !== undefined ? config.metabolic_rate : 1.1,
+            air_velocity: config.air_velocity !== undefined ? config.air_velocity : 20,
             mean_radiant_temp_offset: config.mean_radiant_temp_offset !== undefined ? parseFloat(config.mean_radiant_temp_offset) : 0,
             altitude: config.altitude !== undefined ? parseFloat(config.altitude) : 0,
             show_title: config.show_title !== undefined ? config.show_title : true,
@@ -285,6 +296,12 @@ class PsychrometricCard extends HTMLElement {
         this._hass = hass;
         
         if (!this._config || !this.chartContainer) return;
+
+        // Resolve dynamic comfort parameters
+        const clo = this.resolveParam(this._config.clothing_level, 0.5);
+        const met = this.resolveParam(this._config.metabolic_rate, 1.1);
+        const vel = this.resolveParam(this._config.air_velocity, 20);
+        this.resolvedParams = { clo, met, vel };
 
         const pressure = PsychroMath.getPressureFromAltitude(this._config.altitude, this._config.unit_system);
         const newPoints = [];
@@ -328,7 +345,7 @@ class PsychrometricCard extends HTMLElement {
             rh: p.rh.toFixed(1)
         }));
         
-        const dataSig = JSON.stringify(sigPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig;
+        const dataSig = JSON.stringify(sigPoints) + this._hass.themes.darkMode + this.weatherLoaded + todayDOY + trailSig + trendSig + this.isMetric + loadingSig + clo + met + vel;
         
         if (this._lastDataSig !== dataSig) {
             this.points = newPoints;
@@ -815,9 +832,9 @@ class PsychrometricCard extends HTMLElement {
 
         // Create PMV Clip Path
         const pmvClipPathId = `pmv-clip-${Math.random().toString(36).substr(2, 9)}`;
-        const met = this._config.metabolic_rate;
-        const clo = this._config.clothing_level;
-        const vel = this._config.air_velocity;
+        const met = this.resolvedParams.met;
+        const clo = this.resolvedParams.clo;
+        const vel = this.resolvedParams.vel;
         const mrtOffset = this._config.mean_radiant_temp_offset;
         const upperLine = []; const lowerLine = []; const maxW = 0.018; const wStep = 0.001;
         for (let w = 0; w <= maxW; w += wStep) {
