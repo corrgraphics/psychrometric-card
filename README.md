@@ -15,6 +15,7 @@ This card visualizes the state of air in your home against the **ASHRAE 55 Comfo
 * **Real-Time Visualization:** Plot indoor, outdoor, and HVAC supply points dynamically.
 * **ASHRAE 55 Comfort Zone:** Calculates the comfort polygon based on metabolic rate, clothing level, and air velocity (PMV model).
 * **Weather Heatmap:** Import standard `.epw` (EnergyPlus Weather) files to render a historical frequency heatmap directly on the chart.
+* **Metric & Imperial:** Full SI unit support — °C, kJ/kg, g/kg, m/s — switchable via `unit_system`.
 * **Zero Dependencies:** Built with native SVG and HTML Canvas. No heavy libraries like D3.js or Chart.js.
 * **Theme Aware:** Automatically adapts to Home Assistant Light and Dark modes.
 * **Mobile Friendly:** Responsive design that scales to fit any dashboard column.
@@ -40,7 +41,7 @@ This card visualizes the state of air in your home against the **ASHRAE 55 Comfo
 
 ## Configuration
 
-### Basic Example
+### Basic Example (Imperial)
 
 ```yaml
 type: custom:psychrometric-card
@@ -53,6 +54,25 @@ points:
     color: "#10b981"
   - name: "Outside"
     temperature_entity: sensor.outdoor_temperature
+    humidity_entity: sensor.outdoor_humidity
+    color: "#3b82f6"
+```
+
+### Basic Example (Metric)
+
+```yaml
+type: custom:psychrometric-card
+title: "Home Climate"
+unit_system: metric
+altitude: 300  # Elevation in metres
+air_velocity: 0.1  # m/s
+points:
+  - name: "Living Room"
+    temperature_entity: sensor.living_room_temperature   # expects °C
+    humidity_entity: sensor.living_room_humidity
+    color: "#10b981"
+  - name: "Outside"
+    temperature_entity: sensor.outdoor_temperature       # expects °C
     humidity_entity: sensor.outdoor_humidity
     color: "#3b82f6"
 ```
@@ -103,51 +123,67 @@ enthalpy_trend_hours: 24
 | Name | Type | Default | Description |
 |:-----|:-----|:--------|:------------|
 | `points` | list | **Required** | A list of point objects to plot (see below). |
-| `altitude` | number | `0` | Elevation in feet above sea level (adjusts atmospheric pressure). |
+| `unit_system` | string | `imperial` | Set to `metric` for SI units (°C, kJ/kg, g/kg). |
+| `altitude` | number | `0` | Elevation above sea level. Feet when imperial, metres when metric. |
 | `title` | string | `null` | Optional header text for the card. |
 | `show_title` | boolean | `true` | Show or hide the card header. |
 | `weather_file` | string | `null` | Path to a `.epw` file (e.g., `/local/weather.epw`) for heatmap background. |
-| `weather_window_days` | string | `15` | Number of trailing and leading days to render for seasonal weather data. |
+| `weather_window_days` | number | `15` | Number of trailing and leading days to render for seasonal weather data. |
 | `heatmap_colors` | list | `[Blue/Teal]` | List of 3 colors for the weather frequency gradient (Low, Mid, High). |
 | `clothing_level` | number | `0.5` | Insulation of clothing (clo). |
 | `metabolic_rate` | number | `1.1` | Metabolic activity level (met). |
-| `air_velocity` | number | `20` | Air speed in feet per minute (fpm). |
-| `chart_style` | list | `null` | Chart look and feel configuration. |
-| `enable_trails` | boolean | `true` | Enable historical "ghost" trails to Chart. |
-| `trail_hours` | number | `12` | Number of historical hours to show. |
-| `enthalpy_trend_hours` | number | `24` | Number hours to show on enthalpy trend chart. Set to Zero to dissable. |
-| `unit_system` | string | `imperial` | Set to mertic to convert to SI units. |
+| `air_velocity` | number | `20` (imperial) / `0.1` (metric) | Air speed. Feet per minute (fpm) when imperial, metres per second (m/s) when metric. |
+| `mean_radiant_temp_offset` | number | `0` | Offset applied to dry bulb temp to estimate mean radiant temperature. |
+| `chart_style` | map | `null` | Chart look and feel configuration (see below). |
+| `enable_trails` | boolean | `false` | Enable historical "ghost" trails on the chart. |
+| `trail_hours` | number | `12` | Number of historical hours to show for trails. |
+| `enthalpy_trend_hours` | number | `24` | Hours to show on the enthalpy trend chart. Set to `0` to disable. |
 
 ### Point Object
 Each item in the `points` list accepts:
 
 | Name | Type | Description |
 |:-----|:-----|:------------|
-| `temperature_entity` | string | **Required.** The entity ID for Dry Bulb temperature (°F). |
-| `humidity_entity` | string | **Required.** The entity ID for Relative Humidity (%). |
-| `name` | string | Label shown in the legend. |
-| `color` | string | CSS color for the icon and legend dot. |
+| `temperature_entity` | string | **Required.** Entity ID for Dry Bulb temperature. °F when imperial, °C when metric. |
+| `humidity_entity` | string | **Required.** Entity ID for Relative Humidity (%). |
+| `name` | string | Label shown on the chart and in the legend. |
+| `color` | string | CSS color for the point and legend dot. |
 
 ### Chart Style
-Each item in the `chart_style` list accepts:
+Each item in the `chart_style` map accepts:
 
 | Name | Type | Description |
 |:-----|:-----|:------------|
-| `saturation_line` | string | Saturation line color |
-| `wet_bulb_lines` | string | Wet Bulb Temperature line color |
-| `grid_lines` | string | Background grid line color |
-| `axis_lines` | string | Axis line color |
-| `comfort_zone_fill` | string | ASHRAE 55 Confort Zone fill color |
-| `comfort_zone_stroke` | string | ASHRAE 55 Confort Zone fill color |
-| `label_background` | string | Point label background color and opacity |
+| `saturation_line` | string | Saturation curve color. |
+| `wet_bulb_lines` | string | Wet bulb line color. |
+| `grid_lines` | string | Background grid line color. |
+| `axis_lines` | string | Axis line color. |
+| `comfort_zone_fill` | string | ASHRAE 55 comfort zone fill color. |
+| `comfort_zone_stroke` | string | ASHRAE 55 comfort zone border color. |
+| `label_background` | string | Point label background color and opacity. |
+| `region_labels` | string | RH region label color. |
+
+## Unit Systems
+
+When `unit_system: metric` is set:
+
+* Temperature axes and labels display in **°C**
+* Humidity ratio displays in **g/kg** (instead of grains/lb)
+* Enthalpy displays in **kJ/kg** (instead of Btu/lb)
+* Wet bulb lines are labelled in **°C**
+* Point tooltips show DB, WB, DP in **°C**
+* `altitude` is interpreted in **metres**
+* `air_velocity` is interpreted in **m/s** (default `0.1`)
+
+Temperature entities must provide values in the matching unit — °F for imperial, °C for metric. Humidity is always a percentage (%).
 
 ## Weather Heatmap (.epw)
 To visualize historical weather data:
-1.  Download an EPW file for your location (e.g., from [Climate.OneBuilding.org](https://climate.onebuilding.org/)).
-2.  Place the `.epw` file in your `config/www/` folder.
-3.  Reference it in the config via `/local/filename.epw`.
+1. Download an EPW file for your location (e.g., from [Climate.OneBuilding.org](https://climate.onebuilding.org/)).
+2. Place the `.epw` file in your `config/www/` folder.
+3. Reference it in the config via `/local/filename.epw`.
 
-The card parses this file and bins the hourly data into a frequency heatmap rendered behind the chart lines.
+The card parses this file and bins the hourly data into a frequency heatmap rendered behind the chart lines. EPW files store temperature in °C internally; the card handles the conversion automatically regardless of `unit_system`.
 
 ## Credits
 
@@ -165,7 +201,7 @@ MIT License
 Energy Plus Climate Files
 https://energyplus.net/weather-region/north_and_central_america_wmo_region_4/USA
 
-Visual Color Gradiant Picker
+Visual Color Gradient Picker
 https://cssgradient.io/
 
 Resource for determining ASHRAE 55 parameters for your space.
@@ -175,41 +211,69 @@ https://comfort.cbe.berkeley.edu/
 
 The ASHRAE 55 Standard is: Thermal Environmental Conditions for Human Occupancy.
 
-The green box labeled “comfort zone” in the screenshots shown above is rendered based on inputs to your yaml config.
+The green box labeled "comfort zone" in the screenshots shown above is rendered based on inputs to your yaml config.
 
-| Air Velocity | The air moving around in your home. Do you have forced air hear or radiant heat. Fans, Poor Insulation, Etc.|
-|:-----|:-----|
-|.05 to .25 m/s | unnoticeably still|
-|.3 to .5 m/s | pleasantly still|
-|.55 to 1 m/s | pleasant but noticeable|
-|1.05 to 1.5 | slightly draughty|
-|1.55 to 2 | noticeably draughty|
+### Air Velocity
 
+| Value | Description |
+|:------|:------------|
+| 0.05 – 0.25 m/s (10 – 50 fpm) | Unnoticeably still |
+| 0.30 – 0.50 m/s (60 – 100 fpm) | Pleasantly still |
+| 0.55 – 1.00 m/s (108 – 197 fpm) | Pleasant but noticeable |
+| 1.05 – 1.50 m/s (207 – 295 fpm) | Slightly draughty |
+| 1.55 – 2.00 m/s (305 – 394 fpm) | Noticeably draughty |
 
-|Clothing Level | When you are at home, what are you typically wearing?|
-|:-----|:-----|
-|0 | Naked|
-|.05 | Underwear Only|
-|.1 to .15 | Shorts Only - No Shoes|
-|.2 to .35 | Shorts and T-Shirt - No Shoes|
-|.4 to .55 | Shorts and T-Shirt, Shoes|
-|.6 to .75 | Pants, Shirt, Shoes|
-|.8 to 1.15 | Pants, Shirt, Jacket, Shoes|
-|1.2+ | You are probably heading outside…|
+### Clothing Level
 
-|Metabolic Rate | The heat your body is producing|
-|:-----|:-----|
-|0 | you are dead|
-|.05 to .2 | approaching death|
-|.25 to .4 | sleeping|
-|.45 to .6 | resting|
-|.65 to .8 | reclining and relaxed|
-|.85 to .95 | seated and relaxed|
-|1 to 1.1 | seated w/ sedentary activity|
-|1.15 to 1.2 | standing and relaxed|
-|1.25 to 1.4 | seated with light activity|
-|1.45 to 1.6 | standing with light activity|
-|1.65 to 1.95 | walking|
-|2+ | working out|
+| Value | Description |
+|:------|:------------|
+| 0 | Naked |
+| 0.05 | Underwear only |
+| 0.10 – 0.15 | Shorts only, no shoes |
+| 0.20 – 0.35 | Shorts and t-shirt, no shoes |
+| 0.40 – 0.55 | Shorts and t-shirt, shoes |
+| 0.60 – 0.75 | Pants, shirt, shoes |
+| 0.80 – 1.15 | Pants, shirt, jacket, shoes |
+| 1.20+ | You are probably heading outside… |
 
-You can input these or leave them @ default. Or you can create input sensors in home assistant to dynamically change this. (ie, sleeping @ night, motion or presence sensors to detect motion, seasonal clothing changes, etc.) Just add the sensor entity to the corresponding yaml config.
+### Metabolic Rate
+
+| Value | Description |
+|:------|:------------|
+| 0 | You are dead |
+| 0.05 – 0.20 | Approaching death |
+| 0.25 – 0.40 | Sleeping |
+| 0.45 – 0.60 | Resting |
+| 0.65 – 0.80 | Reclining and relaxed |
+| 0.85 – 0.95 | Seated and relaxed |
+| 1.00 – 1.10 | Seated with sedentary activity |
+| 1.15 – 1.20 | Standing and relaxed |
+| 1.25 – 1.40 | Seated with light activity |
+| 1.45 – 1.60 | Standing with light activity |
+| 1.65 – 1.95 | Walking |
+| 2.00+ | Working out |
+
+You can set these as fixed values or wire them to Home Assistant input sensors for dynamic comfort modeling — e.g. different clothing levels by season, motion sensors to detect activity, presence-based metabolic rate, etc. Just add the sensor entity ID to the corresponding yaml config option.
+
+## Localization
+
+The card supports multiple languages via the `language` config option. All abbreviations in point tooltips, axis labels, and UI text will be translated.
+
+```yaml
+type: custom:psychrometric-card
+unit_system: metric
+language: fr
+points:
+  - ...
+```
+
+| Language | Code | DB | WB | DP | RH |
+|:---------|:-----|:---|:---|:---|:---|
+| English  | `en` | DB | WB | DP | RH |
+| Français | `fr` | BS | BH | PR | HR |
+| Deutsch  | `de` | TT | FT | TP | rF |
+| Español  | `es` | TB | TBH | PR | HR |
+
+`language` defaults to `en` if not set. `unit_system` and `language` are independent — you can use `fr` with imperial units or `en` with metric.
+
+Want to add your language? The `I18N` object at the top of `psychrometric-card.js` is the only place to edit — add a new key with your translations and submit a PR.

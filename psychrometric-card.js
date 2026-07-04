@@ -1,9 +1,9 @@
 /**
  * Psychrometric Chart Home Assistant Card
- * Version 1.2.0 - Dynamic Entities for Comfort Parameters
+ * Version 1.3.0 - Metric/SI Support & Internationalization
  */
 
-console.info("%c PSYCHROMETRIC-CARD %c v1.2.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
+console.info("%c PSYCHROMETRIC-CARD %c v1.3.0 ", "color: white; background: #4f46e5; font-weight: bold;", "color: #4f46e5; background: white; font-weight: bold;");
 
 // --- 1. COLOR UTILS ---
 const ColorUtils = {
@@ -44,7 +44,91 @@ const ColorUtils = {
     }
 };
 
-// --- 2. MATH ENGINE (IP Base with SI Utils) ---
+// --- 2. INTERNATIONALIZATION ---
+const I18N = {
+    en: {
+        dry_bulb:        "DB",
+        wet_bulb:        "WB",
+        dew_point:       "DP",
+        rel_hum:         "RH",
+        enthalpy:        "h",
+        hum_ratio:       "W",
+        comfort_zone:    "Comfort Zone",
+        loading:         "Loading",
+        frequency:       "Frequency",
+        hrs:             "hrs",
+        days:            "days",
+        seasonal_weather:"Seasonal Weather",
+        enthalpy_trend:  "Enthalpy Trend",
+        x_axis:          "Dry Bulb Temperature",
+        y_axis_imperial: "Humidity Ratio (grains/lb)",
+        y_axis_metric:   "Humidity Ratio (g/kg)",
+        unit_imperial:   { temp: "°F", enthalpy: "Btu/lb", hum_ratio: "gr/lb" },
+        unit_metric:     { temp: "°C", enthalpy: "kJ/kg",  hum_ratio: "g/kg"  },
+    },
+    fr: {
+        dry_bulb:        "BS",   // Bulbe Sec
+        wet_bulb:        "BH",   // Bulbe Humide
+        dew_point:       "PR",   // Point de Rosée
+        rel_hum:         "HR",   // Humidité Relative
+        enthalpy:        "h",
+        hum_ratio:       "W",
+        comfort_zone:    "Zone de confort",
+        loading:         "Chargement",
+        frequency:       "Fréquence",
+        hrs:             "h",
+        days:            "jours",
+        seasonal_weather:"Météo saisonnière",
+        enthalpy_trend:  "Tendance enthalpie",
+        x_axis:          "Température bulbe sec",
+        y_axis_imperial: "Teneur en eau (grains/lb)",
+        y_axis_metric:   "Teneur en eau (g/kg)",
+        unit_imperial:   { temp: "°F", enthalpy: "Btu/lb", hum_ratio: "gr/lb" },
+        unit_metric:     { temp: "°C", enthalpy: "kJ/kg",  hum_ratio: "g/kg"  },
+    },
+    de: {
+        dry_bulb:        "TT",   // Trockentemperatur
+        wet_bulb:        "FT",   // Feuchttemperatur
+        dew_point:       "TP",   // Taupunkt
+        rel_hum:         "rF",   // relative Feuchte
+        enthalpy:        "h",
+        hum_ratio:       "x",
+        comfort_zone:    "Komfortzone",
+        loading:         "Laden",
+        frequency:       "Häufigkeit",
+        hrs:             "Std.",
+        days:            "Tage",
+        seasonal_weather:"Saisonales Wetter",
+        enthalpy_trend:  "Enthalpieverlauf",
+        x_axis:          "Trockentemperatur",
+        y_axis_imperial: "Wassergehalt (grains/lb)",
+        y_axis_metric:   "Wassergehalt (g/kg)",
+        unit_imperial:   { temp: "°F", enthalpy: "Btu/lb", hum_ratio: "gr/lb" },
+        unit_metric:     { temp: "°C", enthalpy: "kJ/kg",  hum_ratio: "g/kg"  },
+    },
+    es: {
+        dry_bulb:        "TB",   // Temperatura de Bulbo
+        wet_bulb:        "TBH",  // Temperatura de Bulbo Húmedo
+        dew_point:       "PR",   // Punto de Rocío
+        rel_hum:         "HR",   // Humedad Relativa
+        enthalpy:        "h",
+        hum_ratio:       "W",
+        comfort_zone:    "Zona de confort",
+        loading:         "Cargando",
+        frequency:       "Frecuencia",
+        hrs:             "h",
+        days:            "días",
+        seasonal_weather:"Clima estacional",
+        enthalpy_trend:  "Tendencia entalpía",
+        x_axis:          "Temperatura de bulbo seco",
+        y_axis_imperial: "Razón de humedad (grains/lb)",
+        y_axis_metric:   "Razón de humedad (g/kg)",
+        unit_imperial:   { temp: "°F", enthalpy: "Btu/lb", hum_ratio: "gr/lb" },
+        unit_metric:     { temp: "°C", enthalpy: "kJ/kg",  hum_ratio: "g/kg"  },
+    },
+};
+
+// --- 3. MATH ENGINE (IP Base with SI Utils) ---
 const PsychroMath = {
     F_TO_R: 459.67,
 
@@ -225,6 +309,7 @@ class PsychrometricCard extends HTMLElement {
         this.card = null;
         this.parsedHeatmapColors = [];
         this.isMetric = false;
+        this.t = I18N.en;
     }
 
     resolveParam(val, defaultVal) {
@@ -265,6 +350,7 @@ class PsychrometricCard extends HTMLElement {
             weather_window_days: config.weather_window_days !== undefined ? parseInt(config.weather_window_days) : 15,
             heatmap_colors: rawHeatmapColors,
             unit_system: config.unit_system || "imperial",
+            language: config.language || "en",
             enable_trails: config.enable_trails !== undefined ? config.enable_trails : false,
             trail_hours: config.trail_hours !== undefined ? parseInt(config.trail_hours) : 24,
             enthalpy_trend_hours: config.enthalpy_trend_hours !== undefined ? parseInt(config.enthalpy_trend_hours) : 24,
@@ -281,6 +367,7 @@ class PsychrometricCard extends HTMLElement {
         };
         
         this.isMetric = this._config.unit_system === "metric";
+        this.t = I18N[config.language] || I18N.en;
         this.renderContainer();
         
         if (this.card) {
@@ -682,11 +769,11 @@ class PsychrometricCard extends HTMLElement {
              html += `<div class="legend-item"><div class="dot" style="background: ${color}"></div> ${name}</div>`;
         });
         
-        html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> Comfort Zone</div>`;
+        html += `<div class="legend-item"><div class="dot" style="background: ${this._config.style.comfort_fill}; border: 1px solid ${this._config.style.comfort_stroke}"></div> ${this.t.comfort_zone}</div>`;
         
         if (this._config.weather_file) {
              const days = this._config.weather_window_days;
-             const rangeText = `Seasonal Weather (+/- ${days} days)`;
+             const rangeText = `${this.t.seasonal_weather} (+/- ${days} ${this.t.days})`;
              html += `<div class="legend-item"><div class="dot" style="background: linear-gradient(to right, ${this._config.heatmap_colors[1]}, ${this._config.heatmap_colors[2]})"></div> ${rangeText}</div>`;
         }
 
@@ -937,8 +1024,9 @@ class PsychrometricCard extends HTMLElement {
         svgContent += `<line x1="0" y1="${innerHeight}" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
         svgContent += `<line x1="${innerWidth}" y1="0" x2="${innerWidth}" y2="${innerHeight}" stroke="${cStyle.axis}" />`;
 
-        const xTitle = this.isMetric ? "Dry Bulb Temperature (°C)" : "Dry Bulb Temperature (°F)";
-        const yTitle = this.isMetric ? "Humidity Ratio (g/kg)" : "Humidity Ratio (grains/lb)";
+        const tempUnit = this.isMetric ? this.t.unit_metric.temp : this.t.unit_imperial.temp;
+        const xTitle = `${this.t.x_axis} (${tempUnit})`;
+        const yTitle = this.isMetric ? this.t.y_axis_metric : this.t.y_axis_imperial;
 
         svgContent += `<text x="${innerWidth/2}" y="${innerHeight+40}" text-anchor="middle" fill="${textColor}" font-size="14">${xTitle}</text>`;
         svgContent += `<text transform="rotate(-90)" x="${-innerHeight/2}" y="${innerWidth+55}" text-anchor="middle" fill="${textColor}" font-size="14">${yTitle}</text>`;
@@ -958,8 +1046,8 @@ class PsychrometricCard extends HTMLElement {
                <g transform="translate(${legendX}, ${legendY})">
                    <rect width="${legendW}" height="${legendH}" fill="url(#${gradientId})" stroke="${cStyle.axis}" stroke-width="0.5" />
                    <text x="0" y="-4" font-size="9" fill="${cStyle.axis}">0</text>
-                   <text x="${legendW}" y="-4" font-size="9" fill="${cStyle.axis}" text-anchor="end">${maxBinCount} hrs</text>
-                   <text x="${legendW/2}" y="${legendH + 10}" font-size="9" fill="${cStyle.axis}" text-anchor="middle" font-weight="bold">Frequency</text>
+                   <text x="${legendW}" y="-4" font-size="9" fill="${cStyle.axis}" text-anchor="end">${maxBinCount} ${this.t.hrs}</text>
+                   <text x="${legendW/2}" y="${legendH + 10}" font-size="9" fill="${cStyle.axis}" text-anchor="middle" font-weight="bold">${this.t.frequency}</text>
                </g>
             `;
         }
@@ -978,7 +1066,7 @@ class PsychrometricCard extends HTMLElement {
                          <g transform="translate(20, 15)">
                              <circle r="6" fill="none" stroke="${textColor}" stroke-width="2" stroke-dasharray="10 6" class="spinner" />
                          </g>
-                         <text x="35" y="19" font-size="10" fill="${textColor}" font-weight="bold">Loading...</text>
+                         <text x="35" y="19" font-size="10" fill="${textColor}" font-weight="bold">${this.t.loading}...</text>
                     </g>
                 </g>
             `;
@@ -991,12 +1079,12 @@ class PsychrometricCard extends HTMLElement {
             
             // Logic for Header: Loading vs Title
             let headerText = '';
-            const unitsH = this.isMetric ? "kJ/kg" : "Btu/lb";
+            const unitsH = this.isMetric ? this.t.unit_metric.enthalpy : this.t.unit_imperial.enthalpy;
             
             if (this.historyLoading) {
-                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Loading<tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan></text>`;
+                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">${this.t.loading}<tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan><tspan class="loading-dot">.</tspan></text>`;
             } else {
-                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">Enthalpy Trend (${this._config.enthalpy_trend_hours}h) - ${unitsH}</text>`;
+                 headerText = `<text x="5" y="15" font-size="14" font-weight="bold" fill="${textColor}">${this.t.enthalpy_trend} (${this._config.enthalpy_trend_hours}${this.t.hrs}) - ${unitsH}</text>`;
             }
             
             let trendLines = headerText;
@@ -1025,9 +1113,10 @@ class PsychrometricCard extends HTMLElement {
                 maxH = Math.ceil(maxH / step) * step;
                 if (minH === maxH) { minH -= step; maxH += step; }
 
-                const graphH = tH - titleOffset;
+                const xLabelSpace = 15;
+                const graphH = tH - titleOffset - xLabelSpace;
                 const scaleTX = (t) => ((t - minTime) / (maxTime - minTime)) * tW;
-                const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset; 
+                const scaleTY = (h) => (graphH - ((h - minH) / (maxH - minH)) * graphH) + titleOffset;
                 const trendGen = (data) => {
                     if (data.length === 0) return '';
                     const d = data.map((pt, i) => `${i===0?'M':'L'} ${scaleTX(pt.time.getTime()).toFixed(1)},${scaleTY(pt.value).toFixed(1)}`).join(' ');
@@ -1050,10 +1139,35 @@ class PsychrometricCard extends HTMLElement {
                 this.enthalpyHistory.forEach(series => {
                     seriesPaths += `<path d="${trendGen(series.data)}" fill="none" stroke="${series.color}" stroke-width="2" />`;
                 });
-                
+
+                // X-axis (hours-ago) labels: -Hh on the left, 0h on the right
+                const spanHrs = this._config.enthalpy_trend_hours;
+                let xStep;
+                if (spanHrs <= 6) xStep = 2;
+                else if (spanHrs <= 12) xStep = 3;
+                else if (spanHrs <= 24) xStep = 6;
+                else if (spanHrs <= 48) xStep = 12;
+                else xStep = Math.max(1, Math.round(spanHrs / 5));
+
+                const xLabelY = tH - 4;
+                const tickY1 = titleOffset + graphH;
+                const tickY2 = tickY1 + 4;
+                let hourLabels = '';
+                let xTicks = '';
+                for (let k = 0; k <= spanHrs + 0.001; k += xStep) {
+                    const x = tW * (1 - k / spanHrs);
+                    let anchor = 'middle';
+                    if (k === 0) anchor = 'end';
+                    else if (k >= spanHrs) anchor = 'start';
+                    const label = k === 0 ? '0h' : `-${k}h`;
+                    hourLabels += `<text x="${x.toFixed(1)}" y="${xLabelY}" font-size="10" fill="${axisColor}" text-anchor="${anchor}">${label}</text>`;
+                    xTicks += `<line x1="${x.toFixed(1)}" y1="${tickY1}" x2="${x.toFixed(1)}" y2="${tickY2}" stroke="${axisColor}" stroke-width="0.5" />`;
+                }
+
                 trendLines += `<g mask="url(#${maskId})">${gridLines}</g>`;
                 trendLines += `<g mask="url(#${maskId})">${seriesPaths}</g>`;
                 trendLines += gridLabels;
+                trendLines += `<g mask="url(#${maskId})">${xTicks}${hourLabels}</g>`;
             }
             
             trendSvg += `<g transform="translate(${tX}, ${tY})">${trendLines}</g>`;
@@ -1329,9 +1443,21 @@ class PsychrometricCard extends HTMLElement {
                 const dpC = PsychroMath.FtoC(dp);
                 const w_gkg = pt.w * 1000;
                 const h_kj = PsychroMath.getEnthalpySI(dbC, pt.w);
-                lines = [ pt.name, `DB: ${dbC.toFixed(1)}°C | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wbC.toFixed(1)}°C | DP: ${dpC.toFixed(1)}°C`, `h: ${h_kj.toFixed(1)} kJ/kg | W: ${w_gkg.toFixed(1)} g/kg` ];
+                const u = this.t.unit_metric;
+                lines = [
+                    pt.name,
+                    `${this.t.dry_bulb}: ${dbC.toFixed(1)}${u.temp} | ${this.t.rel_hum}: ${pt.rh.toFixed(1)}%`,
+                    `${this.t.wet_bulb}: ${wbC.toFixed(1)}${u.temp} | ${this.t.dew_point}: ${dpC.toFixed(1)}${u.temp}`,
+                    `${this.t.enthalpy}: ${h_kj.toFixed(1)} ${u.enthalpy} | ${this.t.hum_ratio}: ${w_gkg.toFixed(1)} ${u.hum_ratio}`
+                ];
             } else {
-                lines = [ pt.name, `DB: ${pt.db.toFixed(1)}°F | RH: ${pt.rh.toFixed(1)}%`, `WB: ${wb.toFixed(1)}°F | DP: ${dp.toFixed(1)}°F`, `h: ${h.toFixed(1)} Btu/lb | W: ${w_grains.toFixed(1)} gr/lb` ];
+                const u = this.t.unit_imperial;
+                lines = [
+                    pt.name,
+                    `${this.t.dry_bulb}: ${pt.db.toFixed(1)}${u.temp} | ${this.t.rel_hum}: ${pt.rh.toFixed(1)}%`,
+                    `${this.t.wet_bulb}: ${wb.toFixed(1)}${u.temp} | ${this.t.dew_point}: ${dp.toFixed(1)}${u.temp}`,
+                    `${this.t.enthalpy}: ${h.toFixed(1)} ${u.enthalpy} | ${this.t.hum_ratio}: ${w_grains.toFixed(1)} ${u.hum_ratio}`
+                ];
             }
 
             // Create gradient style for the label box
